@@ -13,7 +13,7 @@ import type { VextRequest } from "vextjs";
  * opentelemetryPlugin() 工厂函数选项
  *
  * 所有字段均为可选，插件内置合理默认值。
- * 优先级：工厂函数参数 > vext config.otel > 环境变量 > 内置默认值
+ * 优先级：OTEL_SERVICE_NAME 环境变量 > 工厂函数参数 > vext config.otel > 内置默认值
  */
 export interface OpenTelemetryPluginOptions {
   /**
