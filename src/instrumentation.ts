@@ -120,9 +120,9 @@ try {
   //   - vext: 完成 onClose 钩子后调用 process.exit(0)
   //   - 此处: 异步执行 sdk.shutdown()，flush 未发送的 span/metric
   //
-  // 注意：若 vext shutdown timeout（默认 30s）比 SDK flush 时间短，
+  // 注意：若 vext shutdown timeout（默认 10s，单位为秒）比 SDK flush 时间短，
   // 可能存在最后一批遥测数据丢失的风险。
-  // 生产环境建议将 VextShutdownConfig.timeout 调整为 ≥60s。
+  // 生产环境建议将 VextShutdownConfig.timeout 调整为 60（即 60 秒）。
   process.on("SIGTERM", () => {
     sdk
       .shutdown()
