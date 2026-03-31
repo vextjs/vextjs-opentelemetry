@@ -1,0 +1,13 @@
+src/
+test/
+scripts/
+coverage/
+*.tsbuildinfo
+*.ts
+!*.d.ts
+tsconfig*.json
+vitest.config.ts
+.prettierrc.json
+.gitignore
+npm-debug.log*
+.DS_Store
