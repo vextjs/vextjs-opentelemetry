@@ -1,5 +1,6 @@
 import { trace, SpanStatusCode } from "@opentelemetry/api";
 import { defineMiddleware, requestContext } from "vextjs";
+import type { VextRequest } from "vextjs";
 
 import type { OtelMetrics, OpenTelemetryPluginOptions } from "./types.js";
 
@@ -21,9 +22,32 @@ export function createTracingMiddleware(
   const metricsEnabled = options.metrics?.enabled !== false;
   const tracingEnabled = options.tracing?.enabled !== false;
   const serviceName =
-    process.env.OTEL_SERVICE_NAME ??
-    options.serviceName ??
-    "vext-app";
+    process.env.OTEL_SERVICE_NAME ?? options.serviceName ?? "vext-app";
+
+  // ── 闭包顶部解析 customLabels（一次解析，多次复用）────
+  const customLabelsFn = options.metrics?.customLabels;
+
+  /**
+   * resolveCustomLabels — 解析本次请求的自定义业务标签
+   *
+   * 支持静态对象和函数两种形式，try/catch 保护：
+   * 自定义函数抛错时降级为空对象，基础指标不受影响。
+   */
+  function resolveCustomLabels(
+    req: VextRequest,
+  ): Record<string, string | number | boolean> {
+    if (!customLabelsFn) return {};
+    try {
+      return typeof customLabelsFn === "function"
+        ? customLabelsFn(req)
+        : customLabelsFn;
+    } catch {
+      console.warn(
+        "[vextjs-opentelemetry] customLabels function threw an error, using defaults",
+      );
+      return {};
+    }
+  }
 
   return defineMiddleware(async (req, res, next) => {
     const startTime = performance.now();
@@ -76,6 +100,7 @@ export function createTracingMiddleware(
           "http.method": req.method,
           "http.status_code": statusCode,
           "http.route": req.route ?? req.path,
+          ...resolveCustomLabels(req),
         };
         metrics.httpRequestTotal.add(1, labels);
         metrics.httpRequestDuration.record(duration, labels);
@@ -101,6 +126,7 @@ export function createTracingMiddleware(
           "http.method": req.method,
           "http.status_code": 500,
           "http.route": req.route ?? req.path,
+          ...resolveCustomLabels(req),
         };
         metrics.httpRequestTotal.add(1, labels);
         metrics.httpRequestDuration.record(duration, labels);

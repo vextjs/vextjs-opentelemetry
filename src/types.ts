@@ -74,6 +74,28 @@ export interface OpenTelemetryPluginOptions {
      * 可根据业务 SLO 调整，例如低延迟场景可使用更细粒度的小值分桶。
      */
     durationBuckets?: number[];
+
+    /**
+     * 为每次请求的 HTTP 指标附加自定义业务标签
+     *
+     * 支持静态对象或函数形式（函数形式可动态读取 req）。
+     * 自定义标签会合并到 httpRequestTotal 和 httpRequestDuration 的 labels 中。
+     *
+     * ⚠️ 注意：避免高基数字段（如 user.id、session.id）作为标签，
+     * 高基数标签会导致时间序列数据库资源消耗剧增。
+     *
+     * 注：不合并到 httpActiveRequests（该指标仅使用 http.method，符合 OTEL 语义约定）。
+     *
+     * @example
+     * // 静态对象形式
+     * customLabels: { "tenant.id": "us-east", "env": "prod" }
+     *
+     * // 函数形式（动态读取）
+     * customLabels: (req) => ({ "api.version": req.headers["x-api-version"] ?? "v1" })
+     */
+    customLabels?:
+      | Record<string, string | number | boolean>
+      | ((req: VextRequest) => Record<string, string | number | boolean>);
   };
 }
 

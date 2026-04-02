@@ -163,7 +163,9 @@ async function buildCjs() {
   const elapsed = Date.now() - startTime;
 
   if (skipped > 0) {
-    console.warn(`\n⚠️  [build-cjs] ${skipped} entry(ies) skipped (missing ESM input).`);
+    console.warn(
+      `\n⚠️  [build-cjs] ${skipped} entry(ies) skipped (missing ESM input).`,
+    );
   }
 
   console.log(

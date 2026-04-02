@@ -87,7 +87,11 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
         },
       );
 
-      const metrics = { httpRequestDuration, httpRequestTotal, httpActiveRequests };
+      const metrics = {
+        httpRequestDuration,
+        httpRequestTotal,
+        httpActiveRequests,
+      };
 
       // ── 挂载到 app.otel ───────────────────────────────────
       // 使用 app.extend() 将 otel 对象注入 app，
@@ -107,7 +111,9 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
     async onClose(app) {
       // SDK 的 graceful shutdown 由 instrumentation.ts 的 SIGTERM handler 负责。
       // 此处记录一条日志，确保在 SDK flush 前最后的追踪信息可见。
-      app.logger.info("[vextjs-opentelemetry] plugin closing, flushing telemetry...");
+      app.logger.info(
+        "[vextjs-opentelemetry] plugin closing, flushing telemetry...",
+      );
     },
   });
 }

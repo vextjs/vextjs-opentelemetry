@@ -10,6 +10,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.1.1] - 2026-04-02
+
+### Added
+
+- **`metrics.customLabels`** — 为 HTTP 指标（`httpRequestTotal` / `httpRequestDuration`）附加自定义业务标签
+  - 支持静态对象形式：`customLabels: { "env": "production" }`
+  - 支持函数形式：`customLabels: (req) => ({ "tenant.id": req.headers["x-tenant-id"] ?? "default" })`
+  - 函数抛错时优雅降级为空对象，基础指标正常记录，输出 warn 日志
+  - `httpActiveRequests` 不含 customLabels（仅 `http.method`，符合 OTEL 语义约定）
+  - 新增 5 个单元测试用例覆盖全部场景
+
+- **`vext.preload` 自动注入** — `package.json` 新增 `vext.preload` 字段
+  - 使用 `vext start` / `vext dev` 时自动注入 `--import vextjs-opentelemetry/instrumentation`
+  - 无需用户手动配置 `--import` 参数，真正实现零配置接入
+
+---
+
 ## [0.1.0] - 2026-03-31
 
 ### Added
@@ -63,10 +80,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Dependencies
 
 **Required peer dependencies:**
+
 - `vextjs` `^0.2.3`
 - `@opentelemetry/api` `^1.9.0`
 
 **Optional peer dependencies:**
+
 - `@opentelemetry/sdk-node` `^0.57.0`
 - `@opentelemetry/exporter-trace-otlp-http` `^0.57.0`
 - `@opentelemetry/exporter-metrics-otlp-http` `^0.57.0`
@@ -74,5 +93,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.0...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.1...HEAD
+[0.1.1]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.0...vextjs-opentelemetry@0.1.1
 [0.1.0]: https://github.com/vextjs/vextjs-plugins/releases/tag/vextjs-opentelemetry@0.1.0

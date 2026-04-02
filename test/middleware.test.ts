@@ -633,4 +633,134 @@ describe("createTracingMiddleware", () => {
       ).rejects.toThrow("propagated");
     });
   });
+
+  // ── 场景9: metrics.customLabels ──────────────────────────────────────────
+
+  describe("metrics.customLabels", () => {
+    it("静态对象形式：label 合并到 httpRequestTotal 和 httpRequestDuration", async () => {
+      const metrics = createMockMetrics();
+      const middleware = createTracingMiddleware(metrics, {
+        metrics: {
+          customLabels: {
+            "tenant.id": "us-east",
+            env: "prod",
+          },
+        },
+      });
+      const req = createMockReq();
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockCounter.add).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          "http.method": "GET",
+          "http.status_code": 200,
+          "tenant.id": "us-east",
+          env: "prod",
+        }),
+      );
+      expect(mockHistogram.record).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.objectContaining({
+          "tenant.id": "us-east",
+          env: "prod",
+        }),
+      );
+    });
+
+    it("函数形式：从 req.headers 读取，返回值正确合并", async () => {
+      const metrics = createMockMetrics();
+      const labelsFn = vi.fn((req: { headers: Record<string, string> }) => ({
+        "api.version": req.headers["x-api-version"] ?? "v1",
+      }));
+      const middleware = createTracingMiddleware(metrics, {
+        metrics: { customLabels: labelsFn as never },
+      });
+      const req = createMockReq({
+        headers: { "x-api-version": "v2" },
+      });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(labelsFn).toHaveBeenCalledWith(req);
+      expect(mockCounter.add).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ "api.version": "v2" }),
+      );
+    });
+
+    it("函数抛错：降级为空对象，基础指标正常记录，输出 warn", async () => {
+      const metrics = createMockMetrics();
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const middleware = createTracingMiddleware(metrics, {
+        metrics: {
+          customLabels: () => {
+            throw new Error("labels error");
+          },
+        },
+      });
+      const req = createMockReq();
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      // 基础指标仍然记录
+      expect(mockCounter.add).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          "http.method": "GET",
+          "http.status_code": 200,
+          "http.route": "/test/:id",
+        }),
+      );
+      // warn 被调用
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("customLabels"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("metrics.enabled: false 时 customLabels 函数不被调用", async () => {
+      const metrics = createMockMetrics();
+      const labelsFn = vi.fn(() => ({ "test.key": "value" }));
+      const middleware = createTracingMiddleware(metrics, {
+        metrics: {
+          enabled: false,
+          customLabels: labelsFn as never,
+        },
+      });
+      const req = createMockReq();
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(labelsFn).not.toHaveBeenCalled();
+      expect(mockCounter.add).not.toHaveBeenCalled();
+    });
+
+    it("httpActiveRequests 不含 customLabels（仅 http.method，符合 OTEL 语义约定）", async () => {
+      const metrics = createMockMetrics();
+      const middleware = createTracingMiddleware(metrics, {
+        metrics: {
+          customLabels: { "tenant.id": "test" },
+        },
+      });
+      const req = createMockReq({ method: "PUT" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      // +1 调用：只含 http.method
+      expect(mockUpDownCounter.add).toHaveBeenCalledWith(1, {
+        "http.method": "PUT",
+      });
+      // -1 调用：只含 http.method
+      expect(mockUpDownCounter.add).toHaveBeenCalledWith(-1, {
+        "http.method": "PUT",
+      });
+    });
+  });
 });
