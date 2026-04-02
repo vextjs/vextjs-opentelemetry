@@ -267,12 +267,37 @@ try {
     const traceFile = join(exportDir, "traces.jsonl");
     const fileSpanExporter = {
       export(
-        spans: Array<{ toJSON?: () => unknown; [key: string]: unknown }>,
+        spans: Array<Record<string, unknown>>,
         resultCallback: (result: { code: number }) => void,
       ) {
         try {
           for (const span of spans) {
-            const data = typeof span.toJSON === "function" ? span.toJSON() : span;
+            // ReadableSpan 对象含循环引用（_spanProcessor 等），不能直接 JSON.stringify。
+            // 手动提取可序列化字段。
+            const ctx =
+              typeof (span as any).spanContext === "function"
+                ? (span as any).spanContext()
+                : undefined;
+            const data = {
+              traceId: ctx?.traceId,
+              spanId: ctx?.spanId,
+              traceFlags: ctx?.traceFlags,
+              parentSpanId: span.parentSpanId,
+              name: span.name,
+              kind: span.kind,
+              startTime: span.startTime,
+              endTime: span.endTime,
+              duration: span.duration,
+              status: span.status,
+              attributes: span.attributes,
+              events: span.events,
+              links: span.links,
+              resource: (span.resource as any)?._attributes,
+              instrumentationLibrary: span.instrumentationLibrary,
+              droppedAttributesCount: span.droppedAttributesCount,
+              droppedEventsCount: span.droppedEventsCount,
+              droppedLinksCount: span.droppedLinksCount,
+            };
             appendFileSync(traceFile, JSON.stringify(data) + "\n", "utf-8");
           }
           resultCallback({ code: 0 }); // SUCCESS

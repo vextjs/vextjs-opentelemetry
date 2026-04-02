@@ -18,6 +18,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - 影响范围：所有使用 `otlpEndpoint` 配置本地文件导出或 none 模式的用户
   - 错误信息：`Cannot read properties of undefined (reading 'createAggregator')`
 
+- **`traces.jsonl` 文件不生成修复** — file 模式的 trace exporter 对 SDK `ReadableSpan` 对象直接调用 `JSON.stringify()`，因对象内含循环引用（`_spanProcessor` 等）导致序列化静默失败。改为手动提取 `traceId`、`spanId`、`name`、`attributes`、`status` 等可序列化字段
+
 ### Added
 
 - **`otlpEndpoint` 支持纯路径格式** — 无需 `file:` 前缀，直接传入绝对路径或相对路径即可触发文件导出模式
