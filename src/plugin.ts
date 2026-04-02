@@ -1,5 +1,5 @@
 import { trace, metrics as otelMetrics } from "@opentelemetry/api";
-import { definePlugin } from "vextjs";
+import { definePlugin, defineMiddleware } from "vextjs";
 
 import { createTracingMiddleware } from "./middleware.js";
 import type { OpenTelemetryPluginOptions } from "./types.js";
@@ -46,16 +46,23 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
         return;
       }
 
-      // ── 服务名称解析（优先级：env > options > config > 默认）──
+      // ── 服务名称解析（优先级：options > config > 默认）────────
       const serviceName =
-        process.env.OTEL_SERVICE_NAME ??
         options.serviceName ??
         app.config.otel?.serviceName ??
         "vext-app";
 
+      // ── OTLP 端点解析（仅从插件配置读取，不读取环境变量）────
+      //
+      // 优先级（高→低）：
+      //   1. options.otlpEndpoint（插件工厂函数参数）
+      //   2. app.config.otel?.endpoint（vext.config.ts 配置）
+      //   3. "none"（默认，SDK 初始化但不导出数据）
+      //
+      const resolvedEndpoint =
+        options.otlpEndpoint ?? app.config.otel?.endpoint ?? "none";
+
       // ── 获取 Tracer / Meter ───────────────────────────────
-      // SDK 未通过 --import 初始化时，getTracer()/getMeter() 返回 Noop 实现，
-      // 所有 span/metric 操作为空操作，零 overhead，不抛错。
       const tracer = trace.getTracer(serviceName);
       const meter = otelMetrics.getMeter(serviceName);
 
@@ -94,13 +101,54 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
       };
 
       // ── 挂载到 app.otel ───────────────────────────────────
-      // 使用 app.extend() 将 otel 对象注入 app，
-      // 之后可通过 req.app.otel 在 handler / service 层访问。
       app.extend("otel", { tracer, meter, metrics });
 
+      // ── 注册状态检查接口 ──────────────────────────────────
+      //
+      // 默认路径：GET /_otel/status
+      // 在追踪中间件前注册，短路匹配后直接返回，不进入业务链路。
+      //
+      const statusEndpointPath =
+        options.statusEndpoint === undefined
+          ? "/_otel/status"
+          : options.statusEndpoint;
+
+      if (statusEndpointPath !== false) {
+        // ── 注册为正式路由（通过 adapter.registerRoute）──────
+        //
+        // 🔴 修复：之前使用 app.use() 中间件拦截 /_otel/status，
+        // 但 Native Adapter 的全局中间件仅对已匹配路由执行。
+        // 未注册的路径直接走 handleNotFound（404），跳过中间件链。
+        //
+        // 改为 app.adapter.registerRoute() 注册为正式路由：
+        //   - find-my-way 路由表中有此条目，请求能正确匹配
+        //   - 全局中间件链（requestId/cors/body-parser 等）自动拼接
+        //   - rawJson 绕过出口包装，返回原始 JSON
+        //
+        const statusHandler = defineMiddleware(async (_req, res, _next) => {
+          const sdkInitialized =
+            process.env.VEXT_OTEL_SDK_STARTED === "1";
+          const exportMode =
+            process.env.VEXT_OTEL_EXPORT_MODE ?? "none";
+
+          // 使用 rawJson 绕过出口包装中间件，确保状态接口始终返回原始 JSON
+          res.rawJson(
+            {
+              sdk: sdkInitialized ? "initialized" : "noop",
+              serviceName,
+              exportMode,
+              endpoint: resolvedEndpoint,
+              autoInstrumentation:
+                process.env.VEXT_OTEL_AUTO_INSTRUMENTATION === "1",
+            },
+            200,
+          );
+        });
+
+        app.adapter.registerRoute("GET", statusEndpointPath, [statusHandler]);
+      }
+
       // ── 注册全局追踪中间件 ────────────────────────────────
-      // 注意：中间件在 app.use() 的注册顺序决定执行顺序。
-      // opentelemetry 中间件应尽早注册，确保覆盖所有后续路由。
       app.use(createTracingMiddleware(metrics, options));
 
       app.logger.info(
@@ -109,8 +157,6 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
     },
 
     async onClose(app) {
-      // SDK 的 graceful shutdown 由 instrumentation.ts 的 SIGTERM handler 负责。
-      // 此处记录一条日志，确保在 SDK flush 前最后的追踪信息可见。
       app.logger.info(
         "[vextjs-opentelemetry] plugin closing, flushing telemetry...",
       );

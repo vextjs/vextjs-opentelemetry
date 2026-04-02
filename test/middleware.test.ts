@@ -110,7 +110,6 @@ describe("createTracingMiddleware", () => {
     mockGetActiveSpan.mockReturnValue(mockSpan);
     // 默认：getStore 返回 mockStore
     mockGetStore.mockReturnValue(mockStore);
-    delete process.env.OTEL_SERVICE_NAME;
   });
 
   // ── 基本行为 ─────────────────────────────────────────────────────────────
@@ -303,8 +302,7 @@ describe("createTracingMiddleware", () => {
       );
     });
 
-    it("OTEL_SERVICE_NAME 环境变量覆盖 options.serviceName", async () => {
-      process.env.OTEL_SERVICE_NAME = "env-svc";
+    it("options.serviceName 直接作为 vext.service 属性", async () => {
       const middleware = createTracingMiddleware(createMockMetrics(), {
         serviceName: "options-svc",
       });
@@ -314,7 +312,7 @@ describe("createTracingMiddleware", () => {
       await (middleware as Function)(req, res, async () => {});
 
       expect(mockSpan.setAttributes).toHaveBeenCalledWith(
-        expect.objectContaining({ "vext.service": "env-svc" }),
+        expect.objectContaining({ "vext.service": "options-svc" }),
       );
     });
 

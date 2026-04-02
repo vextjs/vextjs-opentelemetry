@@ -13,16 +13,78 @@ import type { VextRequest } from "vextjs";
  * opentelemetryPlugin() 工厂函数选项
  *
  * 所有字段均为可选，插件内置合理默认值。
- * 优先级：OTEL_SERVICE_NAME 环境变量 > 工厂函数参数 > vext config.otel > 内置默认值
+ * 优先级：工厂函数参数 > vext config.otel > 内置默认值
  */
 export interface OpenTelemetryPluginOptions {
   /**
    * 服务名称
    *
    * 用于 OTEL tracer/meter 名称及 Resource 的 service.name 属性。
-   * 优先级：OTEL_SERVICE_NAME 环境变量 > options.serviceName > config.otel.serviceName > "vext-app"
+   * 优先级：options.serviceName > config.otel.serviceName > "vext-app"
    */
   serviceName?: string;
+
+  /**
+   * OTLP 上报地址（Collector 端点）
+   *
+   * 由运维/监控平台提供，用于将 Traces 和 Metrics 发送到指定后端。
+   *
+   * **优先级（高→低）**：
+   *   1. 此选项 `otlpEndpoint`（插件工厂函数参数）
+   *   2. `app.config.otel?.endpoint`（vext.config.ts 配置）
+   *   3. `"none"`（默认，SDK 初始化但不导出数据）
+   *
+   * **特殊值**：
+   *   - 未配置 / `"none"` → SDK 初始化但不导出（安全默认值）
+   *   - `join(process.cwd(), "otel-data")` → 存储到项目下 otel-data/ 目录（推荐本地调试）
+   *   - `"./otel-data"` → 相对路径形式（自动基于 process.cwd() 解析）
+   *   - `"file:./otel-data"` → 向后兼容 file: 前缀
+   *   - HTTP/HTTPS URL → 标准 OTLP 网络上报
+   *
+   * **注意**：SDK 通过 `--import` 在模块加载前初始化，早于插件 `setup()`。
+   * 仅在需要网络上报或文件导出时才需在 `package.json` 的
+   * `vext.otel.endpoint` 中同步配置。
+   *
+   * @example
+   * // 生产：上报到 Collector
+   * opentelemetryPlugin({ otlpEndpoint: "http://otel-collector.internal:4318" })
+   * // 本地调试：存储到项目下 otel-data/ 目录
+   * import { join } from "node:path";
+   * opentelemetryPlugin({ otlpEndpoint: join(process.cwd(), "otel-data") })
+   */
+  otlpEndpoint?: string;
+
+  /**
+   * OTLP 鉴权请求头（适用于需要认证的云厂商后端）
+   *
+   * 以对象形式配置。推荐在 `package.json` `vext.otel.headers` 中同步配置
+   *（vext CLI 传播给 instrumentation.ts）。
+   *
+   * 优先级：此选项 `otlpHeaders` > `app.config.otel?.headers`
+   *
+   * @example
+   * // New Relic
+   * otlpHeaders: { "api-key": "YOUR_LICENSE_KEY" }
+   *
+   * // Grafana Cloud
+   * otlpHeaders: { "Authorization": "Basic YOUR_BASE64_TOKEN" }
+   */
+  otlpHeaders?: Record<string, string>;
+
+  /**
+   * OTel 状态检查接口路径（默认：`"/_otel/status"`）
+   *
+   * 启动后可访问此接口快速验证 OTel SDK 初始化状态：
+   *   GET /_otel/status → { sdk, serviceName, endpoint, autoInstrumentation }
+   *
+   * 设为 `false` 禁用该接口（生产环境建议在网关层限制访问）。
+   *
+   * @default "/_otel/status"
+   * @example
+   * statusEndpoint: "/_otel/health"   // 自定义路径
+   * statusEndpoint: false             // 禁用
+   */
+  statusEndpoint?: string | false;
 
   /**
    * 是否启用插件（默认 true）
@@ -189,6 +251,34 @@ declare module "vextjs" {
     otel?: {
       serviceName?: string;
       enabled?: boolean;
+      /**
+       * OTLP 上报地址（Collector 端点）
+       *
+       * 写入此字段后 vext CLI 会自动传播，instrumentation 模块在 SDK 初始化时读取。
+       *
+       * 优先级：`opentelemetryPlugin()` 工厂函数参数 `otlpEndpoint` >
+       *         此字段 >
+       *         `"none"`（默认）
+       *
+       * 特殊值：
+       *   - 未配置 / `"none"` → SDK 初始化但不导出（安全默认值）
+       *   - `"./otel-data"` → 存储到项目下 otel-data/ 目录（自动基于 process.cwd() 解析）
+       *   - HTTP/HTTPS URL → 标准 OTLP 网络上报
+       *
+       * **注意**：仅在需要网络上报或文件导出时配置。
+       * 未配置时 SDK 正常工作但不导出数据。
+       */
+      endpoint?: string;
+      /**
+       * OTLP 鉴权请求头
+       *
+       * 以对象形式配置，vext CLI 会传播为 `OTEL_EXPORTER_OTLP_HEADERS` 环境变量。
+       * 适用于需要认证的云厂商后端（New Relic、Grafana Cloud 等）。
+       *
+       * @example
+       * headers: { "api-key": "YOUR_LICENSE_KEY" }
+       */
+      headers?: Record<string, string>;
     };
   }
 }

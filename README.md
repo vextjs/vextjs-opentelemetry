@@ -86,8 +86,12 @@ export default opentelemetryPlugin({
 
 ```typescript
 opentelemetryPlugin({
-  serviceName: "my-app", // 服务名（也可通过 OTEL_SERVICE_NAME 环境变量设置）
+  serviceName: "my-app", // 服务名
   enabled: true, // false 时完全跳过，适合测试环境
+
+  // 上报地址（不配置则不上报、不存文件）
+  // otlpEndpoint: "http://otel-collector:4318",
+  // otlpEndpoint: join(process.cwd(), "otel-data"),   // 存储到项目下 otel-data/ 目录
 
   tracing: {
     enabled: true,

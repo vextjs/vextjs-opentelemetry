@@ -21,8 +21,7 @@ export function createTracingMiddleware(
 ) {
   const metricsEnabled = options.metrics?.enabled !== false;
   const tracingEnabled = options.tracing?.enabled !== false;
-  const serviceName =
-    process.env.OTEL_SERVICE_NAME ?? options.serviceName ?? "vext-app";
+  const serviceName = options.serviceName ?? "vext-app";
 
   // ── 闭包顶部解析 customLabels（一次解析，多次复用）────
   const customLabelsFn = options.metrics?.customLabels;

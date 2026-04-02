@@ -72,6 +72,9 @@ function createMockApp(otelConfig?: MockOtelConfig) {
     },
     extend: vi.fn(),
     use: vi.fn(),
+    adapter: {
+      registerRoute: vi.fn(),
+    },
   };
 }
 
@@ -80,11 +83,10 @@ function createMockApp(otelConfig?: MockOtelConfig) {
 describe("opentelemetryPlugin", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.OTEL_SERVICE_NAME;
   });
 
   afterEach(() => {
-    delete process.env.OTEL_SERVICE_NAME;
+    // cleanup
   });
 
   // ── 基本属性 ─────────────────────────────────────────────────────────────
@@ -178,11 +180,19 @@ describe("opentelemetryPlugin", () => {
       });
     });
 
-    it("通过 app.use() 注册全局追踪中间件", async () => {
+    it("通过 app.adapter.registerRoute() 注册状态接口 + app.use() 注册追踪中间件", async () => {
       const app = createMockApp();
 
       await opentelemetryPlugin().setup(app as never);
 
+      // 状态接口通过 adapter.registerRoute 注册
+      expect(app.adapter.registerRoute).toHaveBeenCalledOnce();
+      expect(app.adapter.registerRoute).toHaveBeenCalledWith(
+        "GET",
+        "/_otel/status",
+        expect.any(Array),
+      );
+      // 全局追踪中间件通过 app.use 注册
       expect(app.use).toHaveBeenCalledOnce();
     });
 
@@ -204,15 +214,17 @@ describe("opentelemetryPlugin", () => {
       ).resolves.toBeUndefined();
     });
 
-    it("先挂载 app.otel 再注册中间件（extend 在 use 前调用）", async () => {
+    it("先挂载 app.otel 再注册路由和中间件（extend → registerRoute → use）", async () => {
       const app = createMockApp();
       const callOrder: string[] = [];
       app.extend.mockImplementation(() => callOrder.push("extend"));
+      app.adapter.registerRoute.mockImplementation(() => callOrder.push("registerRoute"));
       app.use.mockImplementation(() => callOrder.push("use"));
 
       await opentelemetryPlugin().setup(app as never);
 
-      expect(callOrder).toEqual(["extend", "use"]);
+      // extend → registerRoute(status) → use(tracing)
+      expect(callOrder).toEqual(["extend", "registerRoute", "use"]);
     });
   });
 
@@ -292,19 +304,7 @@ describe("opentelemetryPlugin", () => {
   // ── 场景4: serviceName 解析优先级 ───────────────────────────────────────
 
   describe("serviceName 解析优先级", () => {
-    it("OTEL_SERVICE_NAME 环境变量优先级最高", async () => {
-      process.env.OTEL_SERVICE_NAME = "env-service";
-      const app = createMockApp({ serviceName: "config-service" });
-
-      await opentelemetryPlugin({ serviceName: "options-service" }).setup(
-        app as never,
-      );
-
-      expect(mockGetTracer).toHaveBeenCalledWith("env-service");
-      expect(mockGetMeter).toHaveBeenCalledWith("env-service");
-    });
-
-    it("options.serviceName 次于环境变量", async () => {
+    it("options.serviceName 优先级最高", async () => {
       const app = createMockApp({ serviceName: "config-service" });
 
       await opentelemetryPlugin({ serviceName: "options-service" }).setup(
@@ -312,9 +312,10 @@ describe("opentelemetryPlugin", () => {
       );
 
       expect(mockGetTracer).toHaveBeenCalledWith("options-service");
+      expect(mockGetMeter).toHaveBeenCalledWith("options-service");
     });
 
-    it("config.otel.serviceName 作为第三优先级", async () => {
+    it("config.otel.serviceName 作为第二优先级", async () => {
       const app = createMockApp({ serviceName: "config-service" });
 
       await opentelemetryPlugin().setup(app as never);

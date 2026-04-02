@@ -10,6 +10,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.1.2] - 2026-04-02
+
+### Fixed
+
+- **`selectAggregation` 崩溃修复** — 自定义 metric exporter（noop / file 模式）的 `selectAggregation()` 返回 `undefined` 导致 SDK 调用 `undefined.createAggregator()` 崩溃。移除该方法，由 SDK 使用默认聚合策略
+  - 影响范围：所有使用 `otlpEndpoint` 配置本地文件导出或 none 模式的用户
+  - 错误信息：`Cannot read properties of undefined (reading 'createAggregator')`
+
+### Added
+
+- **`otlpEndpoint` 支持纯路径格式** — 无需 `file:` 前缀，直接传入绝对路径或相对路径即可触发文件导出模式
+  - 绝对路径：`otlpEndpoint: join(process.cwd(), "otel-data")` → 存储到项目下 otel-data/ 目录
+  - 相对路径：`otlpEndpoint: "./otel-data"` → 自动基于 `process.cwd()` 解析
+  - 向后兼容：`file:` 前缀格式仍然支持
+
+### Changed
+
+- **文档新增「自动检测」章节** — 详细说明 MongoDB、Redis、MySQL、PostgreSQL 等数据库的自动追踪配置，包括支持的库列表、效果示例、禁用特定检测的方法、未安装时的降级行为
+
+---
+
 ## [0.1.1] - 2026-04-02
 
 ### Added
@@ -93,6 +114,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.1...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.2...HEAD
+[0.1.2]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.1...vextjs-opentelemetry@0.1.2
 [0.1.1]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.0...vextjs-opentelemetry@0.1.1
 [0.1.0]: https://github.com/vextjs/vextjs-plugins/releases/tag/vextjs-opentelemetry@0.1.0
