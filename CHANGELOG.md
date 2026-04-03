@@ -10,6 +10,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.1.3] - 2026-04-03
+
+### Added
+
+- **`OtelAppExtension.withSpan<T>()`** — 业务操作追踪便捷方法，封装 `tracer.startActiveSpan()` 的 try/catch/finally 样板代码
+  - **成功路径**：自动调用 `span.end()`
+  - **异常路径**：`span.recordException()` + `span.setStatus(ERROR)` + `span.end()` + re-throw
+  - 支持传入原生 `SpanOptions`（`attributes` / `kind` / `links`），由 SDK 在 span 创建阶段写入，无需在回调内手动调用 `setAttributes()`
+  - 3 种使用模式：无 span 参数（仅追踪生命周期）、静态属性（`SpanOptions.attributes`）、动态属性（回调参数 `span`）
+  - 4 个单元测试用例覆盖：成功路径 / 异常路径 / SpanOptions 传递 / Noop 模式
+
+---
+
 ## [0.1.2] - 2026-04-02
 
 ### Fixed

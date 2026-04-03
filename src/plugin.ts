@@ -1,4 +1,5 @@
-import { trace, metrics as otelMetrics } from "@opentelemetry/api";
+import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
+import type { Span, SpanOptions } from "@opentelemetry/api";
 import { definePlugin, defineMiddleware } from "vextjs";
 
 import { createTracingMiddleware } from "./middleware.js";
@@ -100,8 +101,35 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
         httpActiveRequests,
       };
 
+      // ── withSpan 辅助方法（生命周期自动管理）─────────────
+      //
+      // 封装 tracer.startActiveSpan() 的 try/catch/finally 模板：
+      //   options 中的 attributes 由 SDK 在 span 创建阶段自动写入，
+      //   无需在回调内手动调用 setAttributes()。
+      //   成功：span.end() 自动调用
+      //   异常：recordException + setStatus(ERROR) + span.end() + re-throw
+      const withSpan = <T>(
+        name: string,
+        fn: (span: Span) => Promise<T> | T,
+        options?: SpanOptions,
+      ): Promise<T> =>
+        tracer.startActiveSpan(name, options ?? {}, async (span) => {
+          try {
+            return await fn(span);
+          } catch (err) {
+            span.recordException(err as Error);
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: (err as Error).message,
+            });
+            throw err;
+          } finally {
+            span.end();
+          }
+        });
+
       // ── 挂载到 app.otel ───────────────────────────────────
-      app.extend("otel", { tracer, meter, metrics });
+      app.extend("otel", { tracer, meter, metrics, withSpan });
 
       // ── 注册状态检查接口 ──────────────────────────────────
       //

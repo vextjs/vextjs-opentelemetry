@@ -137,16 +137,38 @@ opentelemetryPlugin({
 ## 在代码中访问
 
 ```typescript
-// 在路由 handler 或 service 中访问 tracer / meter / metrics
-const { tracer, meter, metrics } = req.app.otel!;
+// 在路由 handler 或 service 中访问 tracer / meter / metrics / withSpan
+const otel = req.app.otel!;
 
-// 手动创建 Span
-const span = tracer.startSpan("db.query");
-// ...
+// ── 推荐：withSpan — 自动管理 span 生命周期 ──────────────────────
+// span.end() / recordException / setStatus(ERROR) 全自动，无需 try/catch/finally
+const result = await otel.withSpan(
+  "payment.process",
+  () => processPayment(id),
+);
+
+// 带初始属性（通过 SpanOptions.attributes，SDK 在 span 创建时原生写入）
+const result = await otel.withSpan(
+  "payment.process",
+  () => processPayment(id),
+  { attributes: { "payment.provider": "stripe" } },
+);
+
+// 需要基于执行结果动态标注时，通过回调参数访问 span
+const result = await otel.withSpan("payment.process", async (span) => {
+  const res = await processPayment(id);
+  span.setAttribute("payment.result", res.status);
+  return res;
+});
+
+// ── 高级：直接操作 tracer（自定义 SpanKind / Processor 等场景）──
+const span = otel.tracer.startSpan("db.query");
+span.setAttributes({ "db.system": "mongodb" });
+// ... 操作 ...
 span.end();
 
-// 自定义指标
-const counter = meter.createCounter("business.order.created");
+// ── 自定义业务指标 ────────────────────────────────────────────────
+const counter = otel.meter.createCounter("business.order.created");
 counter.add(1, { "order.type": "standard" });
 ```
 

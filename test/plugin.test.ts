@@ -10,6 +10,7 @@ const {
   mockMeter,
   mockGetTracer,
   mockGetMeter,
+  mockSpan,
 } = vi.hoisted(() => {
   const tracer = {
     startSpan: vi.fn(),
@@ -23,6 +24,13 @@ const {
     createCounter: vi.fn(() => counter),
     createUpDownCounter: vi.fn(() => upDownCounter),
   };
+  const span = {
+    setAttributes: vi.fn(),
+    setAttribute: vi.fn(),
+    setStatus: vi.fn(),
+    recordException: vi.fn(),
+    end: vi.fn(),
+  };
   return {
     mockTracer: tracer,
     mockHistogram: histogram,
@@ -31,6 +39,7 @@ const {
     mockMeter: meter,
     mockGetTracer: vi.fn(() => tracer),
     mockGetMeter: vi.fn(() => meter),
+    mockSpan: span,
   };
 });
 
@@ -50,8 +59,7 @@ vi.mock("vextjs", () => ({
 
 // ── 被测模块（在 mock 声明之后 import）────────────────────────────────────
 
-import { opentelemetryPlugin } from "../src/plugin.js";
-
+import { opentelemetryPlugin } from "../src/plugin.js"; import type { OtelAppExtension } from "../src/types.js";
 // ── 测试工具 ──────────────────────────────────────────────────────────────
 
 interface MockOtelConfig {
@@ -169,7 +177,7 @@ describe("opentelemetryPlugin", () => {
       await opentelemetryPlugin().setup(app as never);
 
       expect(app.extend).toHaveBeenCalledOnce();
-      expect(app.extend).toHaveBeenCalledWith("otel", {
+      expect(app.extend).toHaveBeenCalledWith("otel", expect.objectContaining({
         tracer: mockTracer,
         meter: mockMeter,
         metrics: {
@@ -177,7 +185,7 @@ describe("opentelemetryPlugin", () => {
           httpRequestTotal: mockCounter,
           httpActiveRequests: mockUpDownCounter,
         },
-      });
+      }));
     });
 
     it("通过 app.adapter.registerRoute() 注册状态接口 + app.use() 注册追踪中间件", async () => {
@@ -381,6 +389,81 @@ describe("opentelemetryPlugin", () => {
 
       expect(app1.extend).toHaveBeenCalledOnce();
       expect(app2.extend).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ── 场景7: withSpan ──────────────────────────────────────────────
+
+  describe("withSpan", () => {
+    beforeEach(() => {
+      // 让 startActiveSpan 真实调用回调，传入 mockSpan
+      mockTracer.startActiveSpan.mockImplementation(
+        (...args: unknown[]) => {
+          const fn = args[args.length - 1] as (span: typeof mockSpan) => unknown;
+          return fn(mockSpan);
+        },
+      );
+    });
+
+    it("成功路径：span.end() 自动调用，返回值正确透传", async () => {
+      const app = createMockApp();
+      await opentelemetryPlugin().setup(app as never);
+      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+
+      const result = await otel.withSpan("test.op", async () => "ok");
+
+      expect(result).toBe("ok");
+      expect(mockSpan.end).toHaveBeenCalledOnce();
+    });
+
+    it("异常路径：recordException + setStatus(ERROR) + span.end() + 异常 re-throw", async () => {
+      const app = createMockApp();
+      await opentelemetryPlugin().setup(app as never);
+      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+
+      const err = new Error("boom");
+      await expect(
+        otel.withSpan("test.op", async () => {
+          throw err;
+        }),
+      ).rejects.toThrow("boom");
+
+      expect(mockSpan.recordException).toHaveBeenCalledWith(err);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({
+        code: 2, // SpanStatusCode.ERROR
+        message: "boom",
+      });
+      expect(mockSpan.end).toHaveBeenCalledOnce();
+    });
+
+    it("带 options.attributes：startActiveSpan 以三参数形式被调用", async () => {
+      const app = createMockApp();
+      await opentelemetryPlugin().setup(app as never);
+      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+
+      await otel.withSpan(
+        "test.op",
+        async () => { },
+        { attributes: { "payment.provider": "stripe" } },
+      );
+
+      expect(mockTracer.startActiveSpan).toHaveBeenCalledWith(
+        "test.op",
+        { attributes: { "payment.provider": "stripe" } },
+        expect.any(Function),
+      );
+    });
+
+    it("动态属性路径：span 实例正确传入回调，手动 setAttribute 可调用", async () => {
+      const app = createMockApp();
+      await opentelemetryPlugin().setup(app as never);
+      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+
+      await otel.withSpan("test.op", async (span) => {
+        span.setAttribute("payment.id", "pay-123");
+      });
+
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith("payment.id", "pay-123");
     });
   });
 });

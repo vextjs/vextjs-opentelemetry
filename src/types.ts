@@ -4,6 +4,8 @@ import type {
   Histogram,
   Counter,
   UpDownCounter,
+  Span,
+  SpanOptions,
 } from "@opentelemetry/api";
 import type { VextRequest } from "vextjs";
 
@@ -114,8 +116,8 @@ export interface OpenTelemetryPluginOptions {
      * extraAttributes: (req) => ({ 'user.id': req.headers['x-user-id'] })
      */
     extraAttributes?:
-      | Record<string, string | number | boolean>
-      | ((req: VextRequest) => Record<string, string | number | boolean>);
+    | Record<string, string | number | boolean>
+    | ((req: VextRequest) => Record<string, string | number | boolean>);
   };
 
   /**
@@ -156,8 +158,8 @@ export interface OpenTelemetryPluginOptions {
      * customLabels: (req) => ({ "api.version": req.headers["x-api-version"] ?? "v1" })
      */
     customLabels?:
-      | Record<string, string | number | boolean>
-      | ((req: VextRequest) => Record<string, string | number | boolean>);
+    | Record<string, string | number | boolean>
+    | ((req: VextRequest) => Record<string, string | number | boolean>);
   };
 }
 
@@ -212,6 +214,44 @@ export interface OtelAppExtension {
 
   /** 插件创建的标准 HTTP 指标集合 */
   metrics: OtelMetrics;
+
+  /**
+   * 追踪任意操作的辅助方法
+   *
+   * 对 `tracer.startActiveSpan()` 进行 try/catch/finally 封装：
+   * - **成功路径**：`span.end()` 自动调用
+   * - **异常路径**：`span.recordException()` + `span.setStatus(ERROR)` + `span.end()` + re-throw
+   *
+   * `options` 直接为原生 `SpanOptions`（`attributes` / `kind` / `links` 均支持）。
+   * `options.attributes` 由 SDK 在 span 创建阶段自动写入，无需在回调内手动调用 `setAttributes()`。
+   *
+   * @param name    - Span 名称
+   * @param fn      - 被追踪的操作（span 实例为可选参数，仅在需要动态属性时才使用）
+   * @param options - 原生 SpanOptions，可通过 `attributes` 传静态初始属性
+   *
+   * @example
+   * // 不接触 span（仅追踪生命周期）
+   * const result = await req.app.otel!.withSpan("payment.process", () => processPayment(id));
+   *
+   * // 带静态初始属性（通过 SpanOptions.attributes）
+   * const result = await req.app.otel!.withSpan(
+   *   "payment.process",
+   *   () => processPayment(id),
+   *   { attributes: { "payment.provider": "stripe" } },
+   * );
+   *
+   * // 动态属性（依赖回调结果时才需要接收 span）
+   * const result = await req.app.otel!.withSpan("payment.process", async (span) => {
+   *   const res = await processPayment(id);
+   *   span.setAttribute("payment.result", res.status);
+   *   return res;
+   * });
+   */
+  withSpan<T>(
+    name: string,
+    fn: (span: Span) => Promise<T> | T,
+    options?: SpanOptions,
+  ): Promise<T>;
 }
 
 // ── declare module 'vextjs'：类型自动扩展 ───────────────────
