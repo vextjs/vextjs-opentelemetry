@@ -40,7 +40,7 @@ const projectRoot = resolve(__dirname, "..");
  * 确保用户安装的版本被使用，避免依赖版本冲突。
  */
 const externalDeps = [
-  // vextjs 框架（required peer dep）
+  // vextjs 框架（optional peer dep，仅 ./vextjs 子路径需要）
   "vextjs",
 
   // 框架适配器（optional peer deps）
@@ -133,6 +133,11 @@ const entries = [
     name: "fastify",
     input: "dist/adapters/fastify.js",
     output: "dist/adapters/fastify.cjs",
+  },
+  {
+    name: "vextjs",
+    input: "dist/adapters/vextjs.js",
+    output: "dist/adapters/vextjs.cjs",
   },
   {
     name: "log",

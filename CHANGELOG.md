@@ -10,6 +10,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.1.5] - 2026-04-08
+
+### Breaking Change
+
+- **`opentelemetryPlugin` 移至 `/vextjs` 子路径**：主入口 (`vextjs-opentelemetry`) 不再导出 `opentelemetryPlugin`
+  - 迁移方式：`import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs"`
+  - 理由：主入口现在完全框架无关，不依赖 `vextjs`，避免非 VextJS 用户被强制安装框架
+
+### Added
+
+- **`vextjs-opentelemetry/vextjs` 子路径** — VextJS 专属适配器，导出 `opentelemetryPlugin`（唯一依赖 `vextjs` 的模块）
+- **`createWithSpan(tracerName)`** — 从主入口导出的通用 Span 包装工厂函数，适用于所有框架（无 vextjs 依赖）
+
+### Changed
+
+- 主入口 (`dist/index.cjs` / `dist/index.js`) 彻底框架无关，仅依赖 `@opentelemetry/api`
+- `createWithSpan` / `getOtelStatus` 从 `core.ts` 导出（原在 `plugin.ts` 中）
+- `vextjs` 升级为可选 peerDependency（原必须）
+
+---
+
 ## [0.1.4] - 2026-04-07
 
 ### Changed

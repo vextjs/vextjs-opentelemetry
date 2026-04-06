@@ -1,23 +1,15 @@
 // src/index.ts
-// 主入口：导出 opentelemetryPlugin 工厂函数及公开类型
+// 主入口：框架无关的 OTel 工具函数及公开类型
 //
-// 用法：
-//   import { opentelemetryPlugin } from "vextjs-opentelemetry";
-//
-// declare module 扩展通过导入 ./types.js 自动激活，
-// 用户安装本包后 IDE 将自动识别 app.otel / config.otel 类型，无需手写 .d.ts。
+// 此入口 100% 框架无关 — 不依赖 vextjs / express / koa / hono / fastify。
+// VextJS 插件用户请使用子路径：
+//   import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
 
-export { opentelemetryPlugin, createWithSpan, getOtelStatus } from "./plugin.js";
+export { createWithSpan, getOtelStatus } from "./core.js";
 
 export type {
-  OpenTelemetryPluginOptions,
-  OtelAppExtension,
   OtelMetrics,
   OtelHttpContext,
   HttpOtelOptions,
+  OnEndInfo,
 } from "./types.js";
-
-// 激活 declare module 'vextjs' 类型扩展
-// 此副作用导入确保模块增强在用户代码中生效，
-// 即使用户仅导入类型（import type）也能获得完整的类型推断。
-import "./types.js";

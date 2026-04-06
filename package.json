@@ -1,6 +1,6 @@
 {
   "name": "vextjs-opentelemetry",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Official OpenTelemetry plugin for VextJS — zero-config traces, metrics and log correlation",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -38,6 +38,11 @@
       "types": "./dist/adapters/fastify.d.ts",
       "import": "./dist/adapters/fastify.js",
       "require": "./dist/adapters/fastify.cjs"
+    },
+    "./vextjs": {
+      "types": "./dist/adapters/vextjs.d.ts",
+      "import": "./dist/adapters/vextjs.js",
+      "require": "./dist/adapters/vextjs.cjs"
     },
     "./log": {
       "types": "./dist/log.d.ts",

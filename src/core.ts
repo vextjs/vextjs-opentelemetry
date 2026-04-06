@@ -17,7 +17,7 @@
 //   - 仅 import @opentelemetry/api，不 import 任何 SDK 包
 
 import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
-import type { Span } from "@opentelemetry/api";
+import type { Span, SpanOptions } from "@opentelemetry/api";
 
 import type { OtelHttpContext, HttpOtelOptions, OnEndInfo } from "./types.js";
 
@@ -285,5 +285,74 @@ export function buildCoreHandlers(
                 }
             }
         },
+    };
+}
+
+// ── 框架无关工具函数 ──────────────────────────────────────────
+
+/**
+ * 创建绑定到指定 tracer 的 withSpan 辅助方法
+ *
+ * 可在任意 Node.js Web 框架中使用（不依赖任何框架）。
+ *
+ * @param tracerName - Tracer 名称（通常与服务名一致，如 `'chat'`、`'payment'`）
+ *
+ * @example
+ * // Egg.js / Koa / Express：注入到 ctx 或 app
+ * import { createWithSpan } from 'vextjs-opentelemetry';
+ * export default { withSpan: createWithSpan('chat') };
+ */
+export function createWithSpan(tracerName: string) {
+    const tracer = trace.getTracer(tracerName);
+    return function withSpan<T>(
+        name: string,
+        fn: (span: Span) => Promise<T> | T,
+        options?: SpanOptions,
+    ): Promise<T> {
+        return tracer.startActiveSpan(name, options ?? {}, async (span) => {
+            try {
+                return await fn(span);
+            } catch (err) {
+                span.recordException(err as Error);
+                span.setStatus({
+                    code: SpanStatusCode.ERROR,
+                    message: (err as Error).message,
+                });
+                throw err;
+            } finally {
+                span.end();
+            }
+        });
+    };
+}
+
+/**
+ * 获取 OTel SDK 当前运行状态
+ *
+ * 框架无关，各框架自行决定注册的路由路径。
+ *
+ * @example
+ * // Egg.js router
+ * import { getOtelStatus } from 'vextjs-opentelemetry';
+ * router.get('/_otel/status', async (ctx) => {
+ *   ctx.body = getOtelStatus({ serviceName: 'chat', endpoint: '...' });
+ * });
+ */
+export function getOtelStatus(options?: {
+    serviceName?: string;
+    endpoint?: string;
+}): {
+    sdk: "initialized" | "noop";
+    serviceName: string;
+    exportMode: string;
+    endpoint: string;
+    autoInstrumentation: boolean;
+} {
+    return {
+        sdk: process.env.VEXT_OTEL_SDK_STARTED === "1" ? "initialized" : "noop",
+        serviceName: options?.serviceName ?? "unknown",
+        exportMode: process.env.VEXT_OTEL_EXPORT_MODE ?? "none",
+        endpoint: options?.endpoint ?? "none",
+        autoInstrumentation: process.env.VEXT_OTEL_AUTO_INSTRUMENTATION === "1",
     };
 }

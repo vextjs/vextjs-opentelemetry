@@ -145,7 +145,11 @@ npm install @opentelemetry/auto-instrumentations-node
 
 ---
 
-## 快速开始
+## 快速开始（VextJS 框架）
+
+> 本节适用于 **VextJS** 框架用户。其他框架（Express / Koa / Hono / Fastify）请参考上方"通用框架适配器"章节。
+>
+> VextJS 插件通过 `vextjs-opentelemetry/vextjs` 子路径导入（不含 vextjs 的框架无关入口：`vextjs-opentelemetry`）。
 
 ### 运行模式对比
 
@@ -161,7 +165,7 @@ npm install @opentelemetry/auto-instrumentations-node
 
 ```typescript
 // src/plugins/otel.ts
-import { opentelemetryPlugin } from "vextjs-opentelemetry";
+import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
 
 export default opentelemetryPlugin({
   serviceName: "my-app",
@@ -240,7 +244,7 @@ opentelemetryPlugin({
 
 ---
 
-## 在代码中访问
+## 在代码中访问（VextJS）
 
 ```typescript
 // 在路由 handler 或 service 中访问 tracer / meter / metrics / withSpan
@@ -276,6 +280,33 @@ span.end();
 // ── 自定义业务指标 ────────────────────────────────────────────────
 const counter = otel.meter.createCounter("business.order.created");
 counter.add(1, { "order.type": "standard" });
+```
+
+## 在代码中访问（通用框架）
+
+对于非 VextJS 框架，使用主入口导出的 `createWithSpan` 创建 Span：
+
+```typescript
+import { createWithSpan } from "vextjs-opentelemetry";
+
+const withSpan = createWithSpan("my-service");
+
+// 用法与 VextJS 的 otel.withSpan 完全相同
+const result = await withSpan("payment.process", () => processPayment(id));
+
+// 带初始属性
+const result = await withSpan(
+  "payment.process",
+  () => processPayment(id),
+  { attributes: { "payment.provider": "stripe" } },
+);
+
+// 访问 span 并动态标注
+const result = await withSpan("payment.process", async (span) => {
+  const res = await processPayment(id);
+  span.setAttribute("payment.result", res.status);
+  return res;
+});
 ```
 
 ---
