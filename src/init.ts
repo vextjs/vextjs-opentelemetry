@@ -32,7 +32,7 @@ import type { PushMetricExporter, ResourceMetrics } from "@opentelemetry/sdk-met
 import type { ReadableLogRecord, LogRecordExporter } from "@opentelemetry/sdk-logs";
 import type { ExportResult } from "@opentelemetry/core";
 
-import { Resource } from "@opentelemetry/resources";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
@@ -76,7 +76,8 @@ function otelLog(msg: string): void {
 }
 
 function buildResource(serviceName: string) {
-    return new Resource({
+    return resourceFromAttributes({
+        [ATTR_SERVICE_NAME]: serviceName,
         "deployment.environment": process.env.NODE_ENV ?? "production",
         "host.name": os.hostname(),
         "telemetry.sdk.language": "nodejs",
@@ -352,8 +353,10 @@ export function initOtel(options: InitOptions): void {
             ? makeH2cLogExporter(sessions!.log)
             : noopLogExporter;
 
-        const loggerProvider = new LoggerProvider({ resource });
-        loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter));
+        const loggerProvider = new LoggerProvider({
+            resource,
+            processors: [new BatchLogRecordProcessor(logExporter)],
+        });
 
         (globalThis as Record<string, unknown>)[globalLoggerKey] =
             loggerProvider.getLogger(serviceName);

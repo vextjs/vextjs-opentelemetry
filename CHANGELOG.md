@@ -10,6 +10,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.1.4] - 2026-04-07
+
+### Changed
+
+- **升级至 OpenTelemetry JS SDK v2**（`@opentelemetry/sdk-node@^0.214.0`）：
+  - `@opentelemetry/resources@2.x` 移除了 `Resource` 构造函数，改为 `resourceFromAttributes()` 工厂函数
+  - `peerDependencies` 全面升级至对应 v2 版本（`resources@^2.6.1`、`core@^2.6.1`、`sdk-trace-node@^2.6.1` 等）
+
+### Fixed
+
+- `buildResource()` 中 `serviceName` 未写入 Resource 属性的 bug（已补充 `service.name` 字段）
+
+---
+
 ## [0.1.3] - 2026-04-07
 
 ### Added

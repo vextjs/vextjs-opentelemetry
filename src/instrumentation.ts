@@ -195,7 +195,7 @@ try {
     { OTLPMetricExporter },
     { PeriodicExportingMetricReader },
     autoInstrumentationsResult,
-    { Resource, detectResourcesSync, processDetectorSync, envDetectorSync },
+    { resourceFromAttributes, detectResources, processDetector, envDetector },
     { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION },
     { ParentBasedSampler, TraceIdRatioBasedSampler },
   ] = await Promise.all([
@@ -214,10 +214,10 @@ try {
 
   const { getNodeAutoInstrumentations } = autoInstrumentationsResult as {
     getNodeAutoInstrumentations:
-      | ((
-          config?: Record<string, unknown>,
-        ) => Instrumentation<InstrumentationConfig>[])
-      | null;
+    | ((
+      config?: Record<string, unknown>,
+    ) => Instrumentation<InstrumentationConfig>[])
+    | null;
   };
 
   // ── 基础配置 ──────────────────────────────────────────────
@@ -231,13 +231,13 @@ try {
     process.env.OTEL_EXPORTER_OTLP_HEADERS = resolvedHeaders;
   }
 
-  const manualResource = new Resource({
+  const manualResource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? "vext-app",
     [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? "0.0.0",
     "deployment.environment": process.env.NODE_ENV ?? "development",
   });
-  const detectedResource = detectResourcesSync({
-    detectors: [processDetectorSync, envDetectorSync],
+  const detectedResource = detectResources({
+    detectors: [processDetector, envDetector],
   });
   // manual 属性优先级高于自动检测（merge 后者覆盖前者，故 manual 作为第二参数）
   const resource = detectedResource.merge(manualResource);
@@ -410,9 +410,9 @@ try {
   } else {
     console.warn(
       "[vextjs-opentelemetry/instrumentation] " +
-        "@opentelemetry/auto-instrumentations-node is not installed. " +
-        "Auto-instrumentation (HTTP, DB, fetch, etc.) is disabled.\n" +
-        "  npm install @opentelemetry/auto-instrumentations-node",
+      "@opentelemetry/auto-instrumentations-node is not installed. " +
+      "Auto-instrumentation (HTTP, DB, fetch, etc.) is disabled.\n" +
+      "  npm install @opentelemetry/auto-instrumentations-node",
     );
   }
 
@@ -429,12 +429,12 @@ try {
 
   console.log(
     "[vextjs-opentelemetry] SDK initialized" +
-      (getNodeAutoInstrumentations ? " (with auto-instrumentation)" : "") +
-      (exportMode === "none"
-        ? " → no export (configure endpoint to enable)"
-        : exportMode === "file"
-          ? ` → exporting to ${exportDir}`
-          : ` → exporting to ${baseEndpoint}`),
+    (getNodeAutoInstrumentations ? " (with auto-instrumentation)" : "") +
+    (exportMode === "none"
+      ? " → no export (configure endpoint to enable)"
+      : exportMode === "file"
+        ? ` → exporting to ${exportDir}`
+        : ` → exporting to ${baseEndpoint}`),
   );
 
   // ── 优雅关闭 ─────────────────────────────────────────────
@@ -454,12 +454,12 @@ try {
       "[vextjs-opentelemetry/instrumentation] Failed to initialize SDK:",
       (err as Error).message,
       "\nMake sure the required packages are installed:\n" +
-        "  npm install @opentelemetry/sdk-node \\\n" +
-        "              @opentelemetry/exporter-trace-otlp-http \\\n" +
-        "              @opentelemetry/exporter-metrics-otlp-http",
+      "  npm install @opentelemetry/sdk-node \\\n" +
+      "              @opentelemetry/exporter-trace-otlp-http \\\n" +
+      "              @opentelemetry/exporter-metrics-otlp-http",
     );
   }
 }
 
 // ESM 需要显式导出以作为模块使用
-export {};
+export { };
