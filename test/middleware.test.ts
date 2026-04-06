@@ -17,6 +17,7 @@ const {
     setAttribute: vi.fn(),
     setStatus: vi.fn(),
     recordException: vi.fn(),
+    updateName: vi.fn(),
     spanContext: vi.fn(() => ({
       traceId: "abc123traceId00000000000000000000",
       spanId: "def456spanId0000",
@@ -759,6 +760,147 @@ describe("createTracingMiddleware", () => {
       expect(mockUpDownCounter.add).toHaveBeenCalledWith(-1, {
         "http.method": "PUT",
       });
+    });
+  });
+
+  // ── 场景10: tracing.ignorePaths ─────────────────────────────────
+
+  describe("tracing.ignorePaths", () => {
+    it("精确匹配 ignored 路径时不调用 setAttributes", async () => {
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: { ignorePaths: ["/health"] },
+      });
+      const req = createMockReq({ path: "/health" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockSpan.setAttributes).not.toHaveBeenCalled();
+    });
+
+    it("精确匹配 ignored 路径时不写入 ALS store", async () => {
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: { ignorePaths: ["/health"] },
+      });
+      const req = createMockReq({ path: "/health" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockStore.traceId).toBeUndefined();
+    });
+
+    it("正则表达式匹配 ignored 路径时不调用 setAttributes", async () => {
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: { ignorePaths: [/^\/internal\//] },
+      });
+      const req = createMockReq({ path: "/internal/metrics" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockSpan.setAttributes).not.toHaveBeenCalled();
+    });
+
+    it("非 ignored 路径仍正常追踪", async () => {
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: { ignorePaths: ["/health"] },
+      });
+      const req = createMockReq({ path: "/api/users" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockSpan.setAttributes).toHaveBeenCalled();
+    });
+
+    it("ignored 路径仍统计 HTTP 指标", async () => {
+      const metrics = createMockMetrics();
+      const middleware = createTracingMiddleware(metrics, {
+        tracing: { ignorePaths: ["/health"] },
+      });
+      const req = createMockReq({ path: "/health" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockCounter.add).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ "http.status_code": 200 }),
+      );
+    });
+
+    it("ignorePaths 为空数组时不影响正常追踪", async () => {
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: { ignorePaths: [] },
+      });
+      const req = createMockReq({ path: "/api/test" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockSpan.setAttributes).toHaveBeenCalled();
+    });
+  });
+
+  // ── 场景11: tracing.spanNameResolver ───────────────────────────
+
+  describe("tracing.spanNameResolver", () => {
+    it("提供 resolver 时调用 activeSpan.updateName()", async () => {
+      const resolver = vi.fn((req: { method: string; path: string }) =>
+        `${req.method} ${req.path}`,
+      );
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: { spanNameResolver: resolver as never },
+      });
+      const req = createMockReq({ method: "GET", path: "/users/123" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(resolver).toHaveBeenCalledWith(req);
+      expect(mockSpan.updateName).toHaveBeenCalledWith("GET /users/123");
+    });
+
+    it("未提供 resolver 时不调用 updateName()", async () => {
+      const middleware = createTracingMiddleware(createMockMetrics(), {});
+      const req = createMockReq();
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockSpan.updateName).not.toHaveBeenCalled();
+    });
+
+    it("ignored 路径不调用 spanNameResolver", async () => {
+      const resolver = vi.fn(() => "ignored");
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: {
+          ignorePaths: ["/health"],
+          spanNameResolver: resolver as never,
+        },
+      });
+      const req = createMockReq({ path: "/health" });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(resolver).not.toHaveBeenCalled();
+      expect(mockSpan.updateName).not.toHaveBeenCalled();
+    });
+
+    it("span 未录制时不调用 updateName()", async () => {
+      mockSpan.isRecording.mockReturnValue(false);
+      const resolver = vi.fn(() => "should-not-call");
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        tracing: { spanNameResolver: resolver as never },
+      });
+      const req = createMockReq();
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockSpan.updateName).not.toHaveBeenCalled();
     });
   });
 });

@@ -43,11 +43,19 @@ const externalDeps = [
   // vextjs 框架（required peer dep）
   "vextjs",
 
+  // 框架适配器（optional peer deps）
+  "express",
+  "koa",
+  "hono",
+  "fastify",
+
   // OpenTelemetry API（required peer dep）
   "@opentelemetry/api",
+  "@opentelemetry/api-logs",
 
   // OpenTelemetry SDK 系列（optional peer deps）
   "@opentelemetry/sdk-node",
+  "@opentelemetry/sdk-logs",
   "@opentelemetry/sdk-metrics",
   "@opentelemetry/sdk-trace-base",
   "@opentelemetry/sdk-trace-node",
@@ -63,6 +71,10 @@ const externalDeps = [
   "@opentelemetry/semantic-conventions",
   "@opentelemetry/core",
   "@opentelemetry/context-async-hooks",
+
+  // OpenTelemetry 传递性依赖（init.ts 使用）
+  "@opentelemetry/instrumentation",
+  "@opentelemetry/otlp-transformer",
 
   // OpenTelemetry 自动检测（optional peer dep）
   "@opentelemetry/auto-instrumentations-node",
@@ -93,14 +105,44 @@ const externalDeps = [
 /**
  * CJS 构建入口列表
  *
- * 仅构建主入口（"."）的 CJS bundle。
- * "./instrumentation" 子路径为 ESM-only，不需要 CJS 版本。
+ * 仅构建主入口（"."）和 4 个框架适配器子路径的 CJS bundle。
+ * "./instrumentation" 子路径为 ESM-only，不需要 CJS 版本（使用 top-level await）。
  */
 const entries = [
   {
     name: "main",
     input: "dist/index.js",
     output: "dist/index.cjs",
+  },
+  {
+    name: "express",
+    input: "dist/adapters/express.js",
+    output: "dist/adapters/express.cjs",
+  },
+  {
+    name: "koa",
+    input: "dist/adapters/koa.js",
+    output: "dist/adapters/koa.cjs",
+  },
+  {
+    name: "hono",
+    input: "dist/adapters/hono.js",
+    output: "dist/adapters/hono.cjs",
+  },
+  {
+    name: "fastify",
+    input: "dist/adapters/fastify.js",
+    output: "dist/adapters/fastify.cjs",
+  },
+  {
+    name: "log",
+    input: "dist/log.js",
+    output: "dist/log.cjs",
+  },
+  {
+    name: "init",
+    input: "dist/init.js",
+    output: "dist/init.cjs",
   },
 ];
 

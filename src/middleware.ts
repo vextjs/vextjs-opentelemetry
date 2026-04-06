@@ -2,7 +2,7 @@ import { trace, SpanStatusCode } from "@opentelemetry/api";
 import { defineMiddleware, requestContext } from "vextjs";
 import type { VextRequest } from "vextjs";
 
-import type { OtelMetrics, OpenTelemetryPluginOptions } from "./types.js";
+import type { OtelMetrics, OpenTelemetryPluginOptions, OnEndInfo } from "./types.js";
 
 /**
  * 创建 HTTP 追踪中间件
@@ -22,7 +22,14 @@ export function createTracingMiddleware(
   const metricsEnabled = options.metrics?.enabled !== false;
   const tracingEnabled = options.tracing?.enabled !== false;
   const serviceName = options.serviceName ?? "vext-app";
+  // ── 封闭顶部解析 ignorePaths（一次解析，多次复用）────
+  const ignorePaths = options.tracing?.ignorePaths ?? [];
 
+  function isIgnoredPath(urlPath: string): boolean {
+    return ignorePaths.some((pattern) =>
+      typeof pattern === "string" ? pattern === urlPath : pattern.test(urlPath),
+    );
+  }
   // ── 闭包顶部解析 customLabels（一次解析，多次复用）────
   const customLabelsFn = options.metrics?.customLabels;
 
@@ -60,8 +67,9 @@ export function createTracingMiddleware(
     // getActiveSpan() 在 SDK 未初始化时返回 undefined（Noop），
     // isRecording() 为 false，所有追踪操作静默跳过，零 overhead。
     const activeSpan = trace.getActiveSpan();
+    const shouldTrace = tracingEnabled && !isIgnoredPath(req.path);
 
-    if (tracingEnabled && activeSpan?.isRecording()) {
+    if (shouldTrace && activeSpan?.isRecording()) {
       // 解析额外属性（支持函数和对象两种形式）
       const extra =
         typeof options.tracing?.extraAttributes === "function"
@@ -74,6 +82,10 @@ export function createTracingMiddleware(
         "vext.service": serviceName,
         ...extra,
       });
+
+      if (options.tracing?.spanNameResolver) {
+        activeSpan.updateName(options.tracing.spanNameResolver(req));
+      }
 
       // ── F-03 日志关联：写入 ALS store ────────────────────
       // vext logger 内置 mixin 自动读取 store.traceId / store.spanId，
@@ -107,13 +119,28 @@ export function createTracingMiddleware(
       }
 
       // ── 追踪：设置 Span 最终状态 ───────────────────────────
-      if (tracingEnabled && activeSpan?.isRecording()) {
+      if (shouldTrace && activeSpan?.isRecording()) {
         activeSpan.setAttribute("http.status_code", statusCode);
         if (statusCode >= 400) {
           activeSpan.setStatus({
             code: SpanStatusCode.ERROR,
             message: `HTTP ${statusCode}`,
           });
+        }
+      }
+
+      // ── onEnd 回调（成功路径）───────────────────────────────
+      if (options.onEnd) {
+        try {
+          options.onEnd({
+            traceId: activeSpan?.spanContext().traceId ?? "",
+            method: req.method,
+            route: req.route ?? req.path,
+            latencyMs: duration,
+            statusCode,
+          } satisfies OnEndInfo);
+        } catch (e) {
+          console.warn("[vextjs-opentelemetry] onEnd callback threw:", (e as Error).message ?? e);
         }
       }
     } catch (err) {
@@ -133,12 +160,27 @@ export function createTracingMiddleware(
       }
 
       // ── 追踪：记录异常 + 设置 ERROR 状态 ──────────────────
-      if (tracingEnabled && activeSpan?.isRecording()) {
+      if (shouldTrace && activeSpan?.isRecording()) {
         activeSpan.setStatus({
           code: SpanStatusCode.ERROR,
           message: (err as Error).message,
         });
         activeSpan.recordException(err as Error);
+      }
+
+      // ── onEnd 回调（异常路径）───────────────────────────────
+      if (options.onEnd) {
+        try {
+          options.onEnd({
+            traceId: activeSpan?.spanContext().traceId ?? "",
+            method: req.method,
+            route: req.route ?? req.path,
+            latencyMs: Math.round(performance.now() - startTime),
+            statusCode: 500,
+          } satisfies OnEndInfo);
+        } catch (e) {
+          console.warn("[vextjs-opentelemetry] onEnd callback threw:", (e as Error).message ?? e);
+        }
       }
 
       // 重新抛出，由框架的全局错误处理器处理

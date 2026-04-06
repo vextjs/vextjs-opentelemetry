@@ -10,16 +10,37 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.1.3] - 2026-04-03
+## [0.1.3] - 2026-04-07
 
 ### Added
 
+- **通用框架适配器** — 新增 5 个子路径导出，提供开箱即用的 HTTP 追踪中间件/钩子，无需在业务层手动初始化 OTel SDK：
+  - `vextjs-opentelemetry/express` — Express 兼容中间件（`createExpressMiddleware`）
+  - `vextjs-opentelemetry/koa` — Koa / Egg.js 兼容中间件（`createKoaMiddleware`）
+  - `vextjs-opentelemetry/hono` — Hono 兼容中间件（`createHonoMiddleware`）
+  - `vextjs-opentelemetry/fastify` — Fastify v3/v4 生命周期钩子插件（`createFastifyPlugin`），兼容 `routeOptions.url`（v4）和 `routerPath`（v3）回退
+- **`OtelHttpContext`** — 适配器共享上下文接口（`method / path / statusCode / duration / traceId / spanId`），通过 `HttpOtelOptions.customLabels` 可注入自定义 Span 属性
+- **`HttpOtelOptions`** — 适配器统一配置接口，支持 `serviceName / ignorePatterns / spanNameResolver / customLabels / onError`
+- **`createStructuredLogFormatter`** (`vextjs-opentelemetry/log`) — Schema A 结构化 JSON 日志格式化器，固定字段顺序输出 `timestamp / level / message / service.name / env / host / trace_id / span / endpoint / latency_ms / user_id / exception.*`
+- **`createOtelLogBridge`** (`vextjs-opentelemetry/log`) — Schema B OTel LogRecord 桥接，level → SeverityNumber 映射，`trace_id`/`span_id` 由 `LoggingInstrumentor` 自动注入
 - **`OtelAppExtension.withSpan<T>()`** — 业务操作追踪便捷方法，封装 `tracer.startActiveSpan()` 的 try/catch/finally 样板代码
   - **成功路径**：自动调用 `span.end()`
   - **异常路径**：`span.recordException()` + `span.setStatus(ERROR)` + `span.end()` + re-throw
   - 支持传入原生 `SpanOptions`（`attributes` / `kind` / `links`），由 SDK 在 span 创建阶段写入，无需在回调内手动调用 `setAttributes()`
-  - 3 种使用模式：无 span 参数（仅追踪生命周期）、静态属性（`SpanOptions.attributes`）、动态属性（回调参数 `span`）
-  - 4 个单元测试用例覆盖：成功路径 / 异常路径 / SpanOptions 传递 / Noop 模式
+- **`tracing.ignorePaths`** (`OpenTelemetryPluginOptions`) — 忽略追踪的路径列表，支持字符串精确匹配或正则表达式；匹配路径不创建 Span、不写入 ALS，但仍统计 HTTP 指标
+- **`tracing.spanNameResolver`** (`OpenTelemetryPluginOptions`) — 自定义 Span 名称解析函数，返回值覆盖默认的 `"HTTP {METHOD}"` 高基数名称
+- **`VextConfig.otel.sampling.ratio`** — 采样率配置（0.0~1.0，默认 1.0 全量采样）；使用 `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` 初始化
+- **SIGINT 优雅关闭** — 除 `SIGTERM` 外，新增 `SIGINT` 信号监听，支持 Ctrl+C 触发 SDK flush
+- **进程资源自动检测** — 使用 `detectResourcesSync({ detectors: [processDetectorSync, envDetectorSync] })` 自动添加 `process.pid`、`process.runtime.*`、`process.owner` 等进程属性
+- **`createKoaMiddleware` 双路径逻辑** — 无 active span 时自动创建 `SERVER` span，确保 Egg.js 等框架下请求始终被追踪
+
+### Fixed
+
+- **G-05: 检测器 API 名称错误** — 异步 `processDetector`/`envDetector` 在 `detectResourcesSync()` 下返回空属性；更正为同步变体 `processDetectorSync`/`envDetectorSync`
+
+### Deprecated
+
+- **`otlpHeaders`** (`OpenTelemetryPluginOptions`) 标记为 `@deprecated`—该选项不会影响 SDK 初始化阶段的请求头，请改用 `package.json` `vext.otel.headers`
 
 ---
 
@@ -129,7 +150,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.2...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.3...HEAD
+[0.1.3]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.2...vextjs-opentelemetry@0.1.3
 [0.1.2]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.1...vextjs-opentelemetry@0.1.2
 [0.1.1]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.0...vextjs-opentelemetry@0.1.1
 [0.1.0]: https://github.com/vextjs/vextjs-plugins/releases/tag/vextjs-opentelemetry@0.1.0

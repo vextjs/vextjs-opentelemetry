@@ -64,6 +64,11 @@ export interface OpenTelemetryPluginOptions {
    *
    * 优先级：此选项 `otlpHeaders` > `app.config.otel?.headers`
    *
+   * @deprecated 请改用 `package.json` 中的 `vext.otel.headers` 字段，
+   * 由 vext CLI 将其传播为 `OTEL_EXPORTER_OTLP_HEADERS` 环境变量。
+   * instrumentation.ts 在 SDK 初始化时自动读取该环境变量，
+   * 此选项**不会**影响 SDK 初始化阶段的请求头。
+   *
    * @example
    * // New Relic
    * otlpHeaders: { "api-key": "YOUR_LICENSE_KEY" }
@@ -97,6 +102,21 @@ export interface OpenTelemetryPluginOptions {
   enabled?: boolean;
 
   /**
+   * 请求结束回调（成功或异常均触发）
+   *
+   * 在 Span 标注与指标记录完成**之后**调用，不影响追踪数据。
+   * 回调抛出的错误会被捕获并输出 `console.warn`，不影响主链路。
+   *
+   * 适用场景：将 `traceId` / `latency` 等字段注入业务上下文。
+   *
+   * @example
+   * opentelemetryPlugin({
+   *   onEnd: (info) => { vextCtx.trace_id = info.traceId; }
+   * });
+   */
+  onEnd?: (info: OnEndInfo) => void;
+
+  /**
    * 追踪配置
    */
   tracing?: {
@@ -118,6 +138,29 @@ export interface OpenTelemetryPluginOptions {
     extraAttributes?:
     | Record<string, string | number | boolean>
     | ((req: VextRequest) => Record<string, string | number | boolean>);
+
+    /**
+     * 忽略追踪的路径列表（支持字符串精确匹配或正则表达式）
+     *
+     * 匹配的请求路径不会创建 Span，也不会写入 ALS 追踪上下文。
+     * 常用于排除健康检查接口、内部状态接口等噪声路由。
+     *
+     * @example
+     * ignorePaths: ['/health', '/metrics', /^\/internal\//]
+     */
+    ignorePaths?: (string | RegExp)[];
+
+    /**
+     * 自定义 Span 名称解析器
+     *
+     * 默认 Span 名称为 `"HTTP {METHOD}"` 格式（高基数）。
+     * 提供此函数后以返回值覆盖默认名称，推荐使用路由模板（如 `/users/:id`）
+     * 而非实际路径，以避免高基数问题。
+     *
+     * @example
+     * spanNameResolver: (req) => `${req.method} ${req.route ?? req.path}`
+     */
+    spanNameResolver?: (req: VextRequest) => string;
   };
 
   /**
@@ -319,6 +362,162 @@ declare module "vextjs" {
        * headers: { "api-key": "YOUR_LICENSE_KEY" }
        */
       headers?: Record<string, string>;
+      /**
+       * 采样配置
+       *
+       * `ratio`：采样率（0.0 ~ 1.0）
+       *   - `1.0`（默认）— 全量采样
+       *   - `0.1` — 10% 采样（适合高流量生产环境）
+       *   - `0.0` — 全部丢弃（调试用）
+       *
+       * vext CLI 将此字段传播给 instrumentation.ts，
+       * SDK 使用 `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` 初始化。
+       */
+      sampling?: {
+        ratio?: number;
+      };
     };
   }
+}
+
+// ── 通用框架适配接口 ──────────────────────────────────────────
+
+/**
+ * `onEnd` 回调接收的请求完成信息（框架无关值对象）
+ *
+ * 在每次 HTTP 请求处理完成后（无论成功或异常）由各适配器/插件触发。
+ * 消费者可用此信息将追踪字段（如 `traceId`）注入业务上下文（如 Egg.js `ctx`）。
+ */
+export interface OnEndInfo {
+  /**
+   * 十六进制 Trace ID（32 位小写）
+   *
+   * 无活跃 Span 或 Trace ID 为全零（采样关闭）时为空字符串 `""`。
+   */
+  traceId: string;
+  /** HTTP 方法（大写），如 "GET" */
+  method: string;
+  /** 解析后的路由模板（如 "/users/:id"），无法解析时为原始 path */
+  route: string;
+  /** 请求耗时（毫秒整数，`performance.now()` 精度） */
+  latencyMs: number;
+  /** HTTP 响应状态码；异常路径固定为 `500` */
+  statusCode: number;
+}
+
+/**
+ * 框架无关的 HTTP 请求上下文
+ *
+ * 各框架适配器将自己的请求对象映射到此结构，
+ * 再传入 `buildCoreHandlers` 的三阶段钩子。
+ *
+ * 注意：在全局中间件阶段（如 Express `app.use()`），
+ * `route` 可能为 `undefined`（路由匹配尚未发生）。
+ */
+export interface OtelHttpContext {
+  /** HTTP 方法（大写），如 "GET"、"POST" */
+  method: string;
+  /** 请求路径（不含 query string），如 "/users/123" */
+  path: string;
+  /** 路由模板，如 "/users/:id"；全局中间件阶段可能为 undefined */
+  route: string | undefined;
+  /** 请求 ID，通常来自 x-request-id 请求头 */
+  requestId: string | undefined;
+  /** 原始请求头（用于 extraAttributes 等回调动态读取） */
+  headers: Record<string, string | string[] | undefined>;
+}
+
+/**
+ * 通用 HTTP 追踪选项
+ *
+ * 用于 `createExpressMiddleware` / `createKoaMiddleware` /
+ * `createHonoMiddleware` / `createFastifyPlugin` 等工厂函数。
+ *
+ * 与 `OpenTelemetryPluginOptions` 的区别：
+ * - 本接口的回调接收框架无关的 `OtelHttpContext`（而非 `VextRequest`）
+ * - 不包含 VextJS 插件专用字段（如 `statusEndpoint`、`otlpEndpoint` 等）
+ */
+export interface HttpOtelOptions {
+  /**
+   * 服务名称
+   * 用于 `vext.service` Span 属性，默认为 `"http-app"`
+   */
+  serviceName?: string;
+
+  /** 追踪配置 */
+  tracing?: {
+    /** 是否启用追踪中间件，默认 true */
+    enabled?: boolean;
+
+    /**
+     * 忽略追踪的路径列表（支持字符串精确匹配或正则表达式）
+     *
+     * @example
+     * ignorePaths: ['/health', '/metrics', /^\/internal\//]
+     */
+    ignorePaths?: (string | RegExp)[];
+
+    /**
+     * 自定义 Span 名称解析器
+     *
+     * 在请求结束阶段（`await next()` 之后，`ctx.route` 已知）调用。
+     * 默认不调用（使用 auto-instrumentation 生成的 Span 名）。
+     *
+     * @example
+     * spanNameResolver: (req) => `${req.method} ${req.route ?? req.path}`
+     */
+    spanNameResolver?: (ctx: OtelHttpContext) => string;
+
+    /**
+     * 为每个请求的 Span 添加额外属性
+     *
+     * 在 `onRequestStart` 阶段调用（早于 route 匹配，`ctx.route` 可能为 undefined）。
+     *
+     * @example
+     * extraAttributes: (ctx) => ({ 'tenant.id': ctx.headers['x-tenant-id'] ?? '' })
+     */
+    extraAttributes?:
+    | Record<string, string | number | boolean>
+    | ((ctx: OtelHttpContext) => Record<string, string | number | boolean>);
+  };
+
+  /** 指标配置 */
+  metrics?: {
+    /** 是否启用 HTTP 指标，默认 true */
+    enabled?: boolean;
+
+    /**
+     * HTTP 请求时长直方图的分桶边界（单位：毫秒）
+     *
+     * 默认分桶：[5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
+     */
+    durationBuckets?: number[];
+
+    /**
+     * 为每次请求的 HTTP 指标附加自定义业务标签
+     *
+     * ⚠️ 避免高基数字段（如 user ID）作为标签。
+     *
+     * @example
+     * customLabels: (ctx) => ({ 'api.version': ctx.headers['x-api-version'] ?? 'v1' })
+     */
+    customLabels?:
+    | Record<string, string | number | boolean>
+    | ((ctx: OtelHttpContext) => Record<string, string | number | boolean>);
+  };
+
+  /**
+   * 请求结束回调（成功或异常均触发）
+   *
+   * 在 Span 标注与指标记录完成**之后**调用，不影响追踪数据。
+   * 回调抛出的错误会被捕获并输出 `console.warn`，不影响主链路。
+   *
+   * 适用场景：将 `traceId` / `latency` 等字段注入框架上下文（如 Egg.js `ctx`）。
+   *
+   * @example
+   * createKoaMiddleware({
+   *   onEnd: (info) => { koaCtx.trace_id = info.traceId; }
+   * });
+   */
+  onEnd?: (info: OnEndInfo) => void;
 }

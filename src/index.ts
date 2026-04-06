@@ -7,12 +7,14 @@
 // declare module 扩展通过导入 ./types.js 自动激活，
 // 用户安装本包后 IDE 将自动识别 app.otel / config.otel 类型，无需手写 .d.ts。
 
-export { opentelemetryPlugin } from "./plugin.js";
+export { opentelemetryPlugin, createWithSpan, getOtelStatus } from "./plugin.js";
 
 export type {
   OpenTelemetryPluginOptions,
   OtelAppExtension,
   OtelMetrics,
+  OtelHttpContext,
+  HttpOtelOptions,
 } from "./types.js";
 
 // 激活 declare module 'vextjs' 类型扩展

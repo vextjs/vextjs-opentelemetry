@@ -160,6 +160,32 @@ function resolveOtlpHeaders(): string | undefined {
   return undefined;
 }
 
+// ── 读取采样率 ────────────────────────────────────────────────
+//
+// 来源：package.json vext.otel.sampling.ratio（0.0 ~ 1.0，默认 1.0 全量采样）
+//
+function resolveSamplingRatio(): number {
+  try {
+    const pkgPath = join(process.cwd(), "package.json");
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(
+        readFileSync(pkgPath, "utf-8"),
+      ) as Record<string, unknown>;
+      const otelField = (
+        pkg?.vext as Record<string, unknown> | undefined
+      )?.otel as Record<string, unknown> | undefined;
+      const sampling = otelField?.sampling as Record<string, unknown> | undefined;
+      const ratio = sampling?.ratio;
+      if (typeof ratio === "number" && ratio >= 0 && ratio <= 1) {
+        return ratio;
+      }
+    }
+  } catch {
+    // 静默降级
+  }
+  return 1.0; // 默认全量采样
+}
+
 let sdkStarted = false;
 
 try {
@@ -169,8 +195,9 @@ try {
     { OTLPMetricExporter },
     { PeriodicExportingMetricReader },
     autoInstrumentationsResult,
-    { Resource },
+    { Resource, detectResourcesSync, processDetectorSync, envDetectorSync },
     { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION },
+    { ParentBasedSampler, TraceIdRatioBasedSampler },
   ] = await Promise.all([
     import("@opentelemetry/sdk-node"),
     import("@opentelemetry/exporter-trace-otlp-http"),
@@ -182,6 +209,7 @@ try {
     })),
     import("@opentelemetry/resources"),
     import("@opentelemetry/semantic-conventions"),
+    import("@opentelemetry/sdk-trace-base"),
   ]);
 
   const { getNodeAutoInstrumentations } = autoInstrumentationsResult as {
@@ -203,11 +231,22 @@ try {
     process.env.OTEL_EXPORTER_OTLP_HEADERS = resolvedHeaders;
   }
 
-  const resource = new Resource({
+  const manualResource = new Resource({
     [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? "vext-app",
     [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? "0.0.0",
     "deployment.environment": process.env.NODE_ENV ?? "development",
   });
+  const detectedResource = detectResourcesSync({
+    detectors: [processDetectorSync, envDetectorSync],
+  });
+  // manual 属性优先级高于自动检测（merge 后者覆盖前者，故 manual 作为第二参数）
+  const resource = detectedResource.merge(manualResource);
+
+  // ── 采样率 ─────────────────────────────────────────────────
+  const samplingRatio = resolveSamplingRatio();
+  const samplerOption = samplingRatio < 1.0
+    ? { sampler: new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(samplingRatio) }) }
+    : {};
 
   // ── SDK 配置 ──────────────────────────────────────────────
 
@@ -252,6 +291,7 @@ try {
     };
 
     sdkOptions = {
+      ...samplerOption,
       resource,
       traceExporter: noopSpanExporter as never,
       metricReader: new PeriodicExportingMetricReader({
@@ -333,6 +373,7 @@ try {
     };
 
     sdkOptions = {
+      ...samplerOption,
       resource,
       traceExporter: fileSpanExporter as never,
       metricReader: new PeriodicExportingMetricReader({
@@ -345,6 +386,7 @@ try {
   } else {
     // ── OTLP 模式：标准网络上报 ─────────────────────────────
     sdkOptions = {
+      ...samplerOption,
       resource,
       traceExporter: new OTLPTraceExporter({
         url: `${baseEndpoint}/v1/traces`,
@@ -396,14 +438,16 @@ try {
   );
 
   // ── 优雅关闭 ─────────────────────────────────────────────
-  process.on("SIGTERM", () => {
+  const shutdownHandler = () => {
     sdk
       .shutdown()
       .then(() => console.log("[vextjs-opentelemetry] SDK shutdown complete"))
       .catch((err: Error) =>
         console.error("[vextjs-opentelemetry] SDK shutdown error:", err.message),
       );
-  });
+  };
+  process.on("SIGTERM", shutdownHandler);
+  process.on("SIGINT", shutdownHandler);
 } catch (err) {
   if (!sdkStarted) {
     console.warn(

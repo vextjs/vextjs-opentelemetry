@@ -1,9 +1,93 @@
 import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
 import type { Span, SpanOptions } from "@opentelemetry/api";
 import { definePlugin, defineMiddleware } from "vextjs";
-
 import { createTracingMiddleware } from "./middleware.js";
 import type { OpenTelemetryPluginOptions } from "./types.js";
+
+/**
+ * 创建绑定到指定 tracer 的 withSpan 辅助方法
+ *
+ * 可在任意 Node.js Web 框架中使用（不依赖 VextJS 插件系统）。
+ * VextJS 用户优先通过 `app.otel.withSpan` 访问；
+ * Egg.js / Koa / Express 用户在应用启动时调用此工厂，自行注入到 ctx 或 app。
+ *
+ * @param tracerName - Tracer 名称（通常与服务名一致，如 `'chat'`、`'payment'`）
+ *
+ * @example
+ * // Egg.js：在中间件或 extend/context.ts 中注入
+ * import { createWithSpan } from 'vextjs-opentelemetry';
+ * export default { withSpan: createWithSpan('chat') };
+ *
+ * // 直接在 service 层使用
+ * const withSpan = createWithSpan('payment');
+ * const result = await withSpan('db.query', () => db.findUser(id));
+ */
+export function createWithSpan(tracerName: string) {
+  const tracer = trace.getTracer(tracerName);
+  return function withSpan<T>(
+    name: string,
+    fn: (span: Span) => Promise<T> | T,
+    options?: SpanOptions,
+  ): Promise<T> {
+    return tracer.startActiveSpan(name, options ?? {}, async (span) => {
+      try {
+        return await fn(span);
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: (err as Error).message,
+        });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  };
+}
+
+/**
+ * 获取 OTel SDK 当前运行状态
+ *
+ * 与 `createWithSpan` 同理：数据逻辑与框架解耦，各框架自行决定注册路由路径。
+ * VextJS 插件内部使用此函数驱动 `/_otel/status` 端点；
+ * Egg.js / Koa / Express 可在路由中直接调用并返回结果。
+ *
+ * @param options.serviceName - 服务名称（`createWithSpan` / OTel SDK 初始化时传入的同一值）
+ * @param options.endpoint    - OTLP 上报地址（`"none"` 表示不上报）
+ *
+ * @example
+ * // Egg.js router
+ * import { getOtelStatus } from 'vextjs-opentelemetry';
+ * router.get('/_otel/status', async (ctx) => {
+ *   ctx.body = getOtelStatus({ serviceName: 'chat' });
+ * });
+ *
+ * // Koa / Express
+ * app.get('/_otel/status', (req, res) => {
+ *   res.json(getOtelStatus({ serviceName: 'my-service' }));
+ * });
+ */
+export function getOtelStatus(options?: {
+  serviceName?: string;
+  endpoint?: string;
+}): {
+  sdk: "initialized" | "noop";
+  serviceName: string;
+  exportMode: string;
+  endpoint: string;
+  autoInstrumentation: boolean;
+} {
+  return {
+    sdk: process.env.VEXT_OTEL_SDK_STARTED === "1" ? "initialized" : "noop",
+    serviceName: options?.serviceName ?? "unknown",
+    exportMode: process.env.VEXT_OTEL_EXPORT_MODE ?? "none",
+    endpoint: options?.endpoint ?? "none",
+    autoInstrumentation: process.env.VEXT_OTEL_AUTO_INSTRUMENTATION === "1",
+  };
+}
+
+
 
 /**
  * opentelemetryPlugin — VextJS 官方 OpenTelemetry 插件
@@ -103,30 +187,10 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
 
       // ── withSpan 辅助方法（生命周期自动管理）─────────────
       //
-      // 封装 tracer.startActiveSpan() 的 try/catch/finally 模板：
-      //   options 中的 attributes 由 SDK 在 span 创建阶段自动写入，
-      //   无需在回调内手动调用 setAttributes()。
-      //   成功：span.end() 自动调用
-      //   异常：recordException + setStatus(ERROR) + span.end() + re-throw
-      const withSpan = <T>(
-        name: string,
-        fn: (span: Span) => Promise<T> | T,
-        options?: SpanOptions,
-      ): Promise<T> =>
-        tracer.startActiveSpan(name, options ?? {}, async (span) => {
-          try {
-            return await fn(span);
-          } catch (err) {
-            span.recordException(err as Error);
-            span.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: (err as Error).message,
-            });
-            throw err;
-          } finally {
-            span.end();
-          }
-        });
+      // 使用 createWithSpan 工厂绑定服务名称 tracer，
+      // 其他框架（Egg.js / Koa / Express）通过直接调用
+      // createWithSpan(serviceName) 获得等价的独立函数。
+      const withSpan = createWithSpan(serviceName);
 
       // ── 挂载到 app.otel ───────────────────────────────────
       app.extend("otel", { tracer, meter, metrics, withSpan });
@@ -154,21 +218,9 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
         //   - rawJson 绕过出口包装，返回原始 JSON
         //
         const statusHandler = defineMiddleware(async (_req, res, _next) => {
-          const sdkInitialized =
-            process.env.VEXT_OTEL_SDK_STARTED === "1";
-          const exportMode =
-            process.env.VEXT_OTEL_EXPORT_MODE ?? "none";
-
           // 使用 rawJson 绕过出口包装中间件，确保状态接口始终返回原始 JSON
           res.rawJson(
-            {
-              sdk: sdkInitialized ? "initialized" : "noop",
-              serviceName,
-              exportMode,
-              endpoint: resolvedEndpoint,
-              autoInstrumentation:
-                process.env.VEXT_OTEL_AUTO_INSTRUMENTATION === "1",
-            },
+            getOtelStatus({ serviceName, endpoint: resolvedEndpoint }),
             200,
           );
         });

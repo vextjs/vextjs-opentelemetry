@@ -22,6 +22,112 @@
 
 ---
 
+```bash
+# 必须安装
+npm install vextjs-opentelemetry @opentelemetry/api
+
+# 可选：需要实际发送遥测数据时安装
+npm install @opentelemetry/sdk-node \
+            @opentelemetry/exporter-trace-otlp-http \
+            @opentelemetry/exporter-metrics-otlp-http
+
+# 可选：自动检测 HTTP、fetch、数据库等
+npm install @opentelemetry/auto-instrumentations-node
+```
+
+---
+
+## 通用框架适配器
+
+`vextjs-opentelemetry` 提供子路径导出，支持 Express / Koa / Hono / Fastify 等主流框架（无需使用 VextJS 框架本身）：
+
+### 共同前提：SDK 初始化
+
+所有框架均通过 `--import` 预加载 SDK（与 VextJS 场景完全相同，无需改动）：
+
+```bash
+node --import vextjs-opentelemetry/instrumentation server.js
+```
+
+### Express
+
+```typescript
+import express from "express";
+import { createExpressMiddleware } from "vextjs-opentelemetry/express";
+
+const app = express();
+app.use(createExpressMiddleware({
+  serviceName: "my-express-app",
+  tracing: {
+    spanNameResolver: (ctx) => `${ctx.method} ${ctx.route ?? ctx.path}`,
+  },
+}));
+```
+
+### Koa（含 Egg.js）
+
+```typescript
+import Koa from "koa";
+import { createKoaMiddleware } from "vextjs-opentelemetry/koa";
+
+const app = new Koa();
+app.use(createKoaMiddleware({ serviceName: "my-koa-app" }));
+```
+
+**Egg.js** 中间件签名与 Koa 完全相同，直接复用：
+
+```typescript
+// app/middleware/otel.ts
+import { createKoaMiddleware } from "vextjs-opentelemetry/koa";
+import type { Application } from "egg";
+
+export default (_options: unknown, _app: Application) =>
+  createKoaMiddleware({ serviceName: "my-egg-app" });
+
+// config/config.default.ts → middleware: ["otel"]
+```
+
+### Hono
+
+```typescript
+import { Hono } from "hono";
+import { createHonoMiddleware } from "vextjs-opentelemetry/hono";
+
+const app = new Hono();
+app.use(createHonoMiddleware({ serviceName: "my-hono-app" }));
+```
+
+### Fastify
+
+```typescript
+import Fastify from "fastify";
+import { createFastifyPlugin } from "vextjs-opentelemetry/fastify";
+
+const fastify = Fastify();
+await fastify.register(createFastifyPlugin({ serviceName: "my-fastify-app" }));
+```
+
+### 通用回调接口：`OtelHttpContext`
+
+所有框架适配器的回调函数均接收框架无关的 `OtelHttpContext`：
+
+```typescript
+import type { HttpOtelOptions } from "vextjs-opentelemetry";
+
+const options: HttpOtelOptions = {
+  tracing: {
+    ignorePaths: ["/health", /^\/internal\//],
+    spanNameResolver: (ctx) => `${ctx.method} ${ctx.route ?? ctx.path}`,
+    extraAttributes: (ctx) => ({ "tenant.id": ctx.headers["x-tenant-id"] ?? "" }),
+  },
+  metrics: {
+    customLabels: (ctx) => ({ "api.version": ctx.headers["x-api-version"] ?? "v1" }),
+  },
+};
+```
+
+---
+
 ## 安装
 
 ```bash
