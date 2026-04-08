@@ -65,6 +65,10 @@ const externalDeps = [
   "@opentelemetry/exporter-trace-otlp-grpc",
   "@opentelemetry/exporter-metrics-otlp-http",
   "@opentelemetry/exporter-metrics-otlp-grpc",
+  "@opentelemetry/exporter-logs-otlp-http",
+  "@opentelemetry/exporter-logs-otlp-grpc",
+  "@opentelemetry/exporter-trace-otlp-grpc",
+  "@opentelemetry/exporter-metrics-otlp-grpc",
 
   // OpenTelemetry 传递性普通依赖（由 sdk-node 安装）
   "@opentelemetry/resources",
@@ -78,6 +82,10 @@ const externalDeps = [
 
   // OpenTelemetry 自动检测（optional peer dep）
   "@opentelemetry/auto-instrumentations-node",
+
+  // gRPC（OTel gRPC exporter 依赖，单实例要求）
+  "@grpc/grpc-js",
+  "@grpc/proto-loader",
 
   // Node.js 内置模块
   "node:*",
@@ -125,6 +133,11 @@ const entries = [
     output: "dist/adapters/koa.cjs",
   },
   {
+    name: "egg",
+    input: "dist/adapters/egg.js",
+    output: "dist/adapters/egg.cjs",
+  },
+  {
     name: "hono",
     input: "dist/adapters/hono.js",
     output: "dist/adapters/hono.cjs",
@@ -143,11 +156,6 @@ const entries = [
     name: "log",
     input: "dist/log.js",
     output: "dist/log.cjs",
-  },
-  {
-    name: "init",
-    input: "dist/init.js",
-    output: "dist/init.cjs",
   },
 ];
 

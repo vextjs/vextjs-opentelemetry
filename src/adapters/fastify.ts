@@ -17,16 +17,31 @@ import type {
     FastifyReply,
 } from "fastify";
 
-import { buildCoreHandlers } from "../core.js";
-import type { HttpOtelOptions, OtelHttpContext } from "../types.js";
-import type { CoreRequestState } from "../core.js";
+import { withSpan } from "../core/span.js";
+import { buildCoreHandlers } from "../core/http-core.js";
+import type { HttpOtelOptions, OtelHttpContext } from "../core/types.js";
+import type { CoreRequestState } from "../core/http-core.js";
 
-export { OtelHttpContext, HttpOtelOptions };
+export type { OtelHttpContext, HttpOtelOptions };
 
-// 为 Fastify request 对象扩展 _otelState 属性
+// ── Fastify Request 类型扩展 ───────────────────────────────────
 declare module "fastify" {
     interface FastifyRequest {
         _otelState?: CoreRequestState;
+        /**
+         * 追踪任意操作（由 createFastifyPlugin 默认注入，框架可覆盖扩展）
+         *
+         * 两层机制：
+         *   1. adapter 默认注入（保底）：decorateRequest 初始化，onRequest 赋值
+         *   2. 框架自定义注入（可选）：在后续 onRequest hook 中覆盖 request.withSpan
+         *
+         * @example
+         * const result = await request.withSpan("db.query", async (span) => {
+         *   span.setAttribute("db.table", "users");
+         *   return db.findUser(id);
+         * });
+         */
+        withSpan: typeof withSpan;
     }
 }
 
@@ -49,9 +64,14 @@ export function createFastifyPlugin(options: HttpOtelOptions = {}): FastifyPlugi
   const otelFastifyPlugin = async function (fastify: Parameters<FastifyPluginAsync>[0]) {
     // 在 request 对象上声明 _otelState 存储槽
     fastify.decorateRequest("_otelState", undefined);
+    fastify.decorateRequest("withSpan", withSpan);
 
     // ── Hook 1: onRequest — 请求开始 ──────────────────────
     fastify.addHook("onRequest", async (request: FastifyRequest, _reply: FastifyReply) => {
+      // 默认注入（保底）：框架可在后续 onRequest hook 中覆盖 request.withSpan 实现扩展
+      if (!request.withSpan) {
+        request.withSpan = withSpan;
+      }
       const requestId = request.headers["x-request-id"];
       const ctx: OtelHttpContext = {
         method: request.method,

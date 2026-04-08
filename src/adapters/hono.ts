@@ -4,13 +4,32 @@
 // 用法：
 //   import { createHonoMiddleware } from "vextjs-opentelemetry/hono";
 //   app.use(createHonoMiddleware({ serviceName: "my-app" }));
+//
+// ── withSpan 注入说明 ───────────────────────────────────────────
+// Hono 使用泛型 Variables 管理 context 变量，无法通过 declare module 全局扩展。
+// 推荐在应用侧声明 Variables 类型，并通过 c.get("withSpan") 使用：
+//
+//   import { withSpan } from "vextjs-opentelemetry";
+//   import type { Hono } from "hono";
+//
+//   type AppVariables = { withSpan: typeof withSpan };
+//   const app = new Hono<{ Variables: AppVariables }>();
+//   app.use(createHonoMiddleware({ serviceName: "my-app" }));
+//
+//   app.get("/users/:id", async (c) => {
+//     const result = await c.get("withSpan")("db.query", async (span) => {
+//       span.setAttribute("db.table", "users");
+//       return db.findUser(c.req.param("id"));
+//     });
+//     return c.json(result);
+//   });
 
 import type { MiddlewareHandler, Context as HonoContext } from "hono";
 
-import { buildCoreHandlers } from "../core.js";
-import type { HttpOtelOptions, OtelHttpContext } from "../types.js";
+import { buildCoreHandlers } from "../core/http-core.js";
+import type { HttpOtelOptions, OtelHttpContext } from "../core/types.js";
 
-export { OtelHttpContext, HttpOtelOptions };
+export type { OtelHttpContext, HttpOtelOptions };
 
 /**
  * 创建 Hono 追踪中间件

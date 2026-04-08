@@ -59,7 +59,7 @@ vi.mock("vextjs", () => ({
 
 // ── 被测模块（在 mock 声明之后 import）────────────────────────────────────
 
-import { opentelemetryPlugin } from "../src/plugin.js"; import type { OtelAppExtension } from "../src/types.js";
+import { opentelemetryPlugin } from "../src/adapters/vextjs.js"; import type { OtelAppExtension } from "../src/core/types.js";
 // ── 测试工具 ──────────────────────────────────────────────────────────────
 
 interface MockOtelConfig {
@@ -459,7 +459,7 @@ describe("opentelemetryPlugin", () => {
       await opentelemetryPlugin().setup(app as never);
       const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
 
-      await otel.withSpan("test.op", async (span) => {
+      await otel.withSpan("test.op", async (span: import("@opentelemetry/api").Span) => {
         span.setAttribute("payment.id", "pay-123");
       });
 

@@ -16,10 +16,31 @@
 
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 
-import { buildCoreHandlers } from "../core.js";
-import type { HttpOtelOptions, OtelHttpContext } from "../types.js";
+import { withSpan } from "../core/span.js";
+import { buildCoreHandlers } from "../core/http-core.js";
+import type { HttpOtelOptions, OtelHttpContext } from "../core/types.js";
 
-export { OtelHttpContext, HttpOtelOptions };
+export type { OtelHttpContext, HttpOtelOptions };
+
+// ── Express Request 类型扩展 ───────────────────────────────────
+declare module "express-serve-static-core" {
+  interface Request {
+    /**
+     * 追踪任意操作（由 createExpressMiddleware 默认注入，框架可覆盖扩展）
+     *
+     * 两层机制：
+     *   1. adapter 默认注入（保底）：直接使用 core withSpan
+     *   2. 框架自定义注入（可选）：在后续中间件中覆盖 req.withSpan 实现扩展
+     *
+     * @example
+     * const result = await req.withSpan("db.query", async (span) => {
+     *   span.setAttribute("db.table", "users");
+     *   return db.findUser(id);
+     * });
+     */
+    withSpan: typeof withSpan;
+  }
+}
 
 /**
  * 创建 Express 追踪中间件
@@ -39,6 +60,11 @@ export function createExpressMiddleware(options: HttpOtelOptions = {}): RequestH
     res: Response,
     next: NextFunction,
   ): void {
+    // 默认注入（保底）：框架可在后续中间件中覆盖 req.withSpan 实现扩展
+    if (!req.withSpan) {
+      req.withSpan = withSpan;
+    }
+
     const requestId = req.headers["x-request-id"];
     const ctx: OtelHttpContext = {
       method: req.method,

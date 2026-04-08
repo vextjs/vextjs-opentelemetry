@@ -48,8 +48,8 @@ vi.mock("@opentelemetry/api", () => ({
     SpanStatusCode: { UNSET: 0, OK: 1, ERROR: 2 },
 }));
 
-import { buildCoreHandlers } from "../src/core.js";
-import type { OtelHttpContext } from "../src/types.js";
+import { buildCoreHandlers } from "../src/core/http-core.js";
+import type { OtelHttpContext } from "../src/core/types.js";
 
 // ── 测试工具 ──────────────────────────────────────────────────
 

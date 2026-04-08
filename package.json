@@ -1,7 +1,7 @@
 {
   "name": "vextjs-opentelemetry",
-  "version": "0.1.5",
-  "description": "Official OpenTelemetry plugin for VextJS — zero-config traces, metrics and log correlation",
+  "version": "1.0.0",
+  "description": "Framework-agnostic OpenTelemetry SDK wrapper — zero-config traces, metrics, Span API and multi-framework adapters",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -29,6 +29,11 @@
       "import": "./dist/adapters/koa.js",
       "require": "./dist/adapters/koa.cjs"
     },
+    "./egg": {
+      "types": "./dist/adapters/egg.d.ts",
+      "import": "./dist/adapters/egg.js",
+      "require": "./dist/adapters/egg.cjs"
+    },
     "./hono": {
       "types": "./dist/adapters/hono.d.ts",
       "import": "./dist/adapters/hono.js",
@@ -48,11 +53,6 @@
       "types": "./dist/log.d.ts",
       "import": "./dist/log.js",
       "require": "./dist/log.cjs"
-    },
-    "./init": {
-      "types": "./dist/init.d.ts",
-      "import": "./dist/init.js",
-      "require": "./dist/init.cjs"
     }
   },
   "files": [
@@ -71,57 +71,17 @@
     "node": ">=18.0.0"
   },
   "license": "MIT",
-  "peerDependencies": {
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/api-logs": "^0.214.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.72.0",
-    "@opentelemetry/exporter-metrics-otlp-http": "^0.214.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.214.0",
-    "@opentelemetry/sdk-node": "^0.214.0",
-    "express": ">=4.0.0",
-    "fastify": ">=4.0.0",
-    "hono": ">=4.0.0",
-    "koa": ">=2.0.0",
-    "vextjs": "^0.2.3"
-  },
-  "peerDependenciesMeta": {
-    "@opentelemetry/api-logs": {
-      "optional": true
-    },
-    "@opentelemetry/sdk-node": {
-      "optional": true
-    },
-    "@opentelemetry/exporter-trace-otlp-http": {
-      "optional": true
-    },
-    "@opentelemetry/exporter-metrics-otlp-http": {
-      "optional": true
-    },
-    "@opentelemetry/auto-instrumentations-node": {
-      "optional": true
-    },
-    "express": {
-      "optional": true
-    },
-    "koa": {
-      "optional": true
-    },
-    "hono": {
-      "optional": true
-    },
-    "fastify": {
-      "optional": true
-    },
-    "vextjs": {
-      "optional": true
-    }
-  },
-  "devDependencies": {
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.214.0",
     "@opentelemetry/auto-instrumentations-node": "^0.72.0",
     "@opentelemetry/core": "^2.6.1",
+    "@opentelemetry/exporter-logs-otlp-grpc": "^0.214.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.214.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.214.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.214.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.214.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.214.0",
     "@opentelemetry/instrumentation": "^0.214.0",
     "@opentelemetry/otlp-transformer": "^0.214.0",
@@ -131,7 +91,25 @@
     "@opentelemetry/sdk-node": "^0.214.0",
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
-    "@opentelemetry/semantic-conventions": "^1.30.0",
+    "@opentelemetry/semantic-conventions": "^1.30.0"
+  },
+  "peerDependencies": {
+    "egg": ">=3.0.0",
+    "express": ">=4.0.0",
+    "fastify": ">=4.0.0",
+    "hono": ">=4.0.0",
+    "koa": ">=2.0.0",
+    "vextjs": "^0.2.5"
+  },
+  "peerDependenciesMeta": {
+    "express": { "optional": true },
+    "koa": { "optional": true },
+    "hono": { "optional": true },
+    "fastify": { "optional": true },
+    "egg": { "optional": true },
+    "vextjs": { "optional": true }
+  },
+  "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/koa": "^3.0.2",
     "@types/node": "^22.0.0",
@@ -142,7 +120,7 @@
     "koa": "^3.2.0",
     "prettier": "^3.8.1",
     "typescript": "^5.8.3",
-    "vextjs": "file:../vext",
+    "vextjs": "^0.2.5",
     "vitest": "^3.1.3"
   }
 }

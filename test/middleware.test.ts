@@ -58,8 +58,8 @@ vi.mock("vextjs", () => ({
 
 // ── 被测模块 ───────────────────────────────────────────────────────────────
 
-import { createTracingMiddleware } from "../src/middleware.js";
-import type { OtelMetrics, OpenTelemetryPluginOptions } from "../src/types.js";
+import { createTracingMiddleware } from "../src/adapters/vextjs.js";
+import type { OtelMetrics, OpenTelemetryPluginOptions } from "../src/adapters/vextjs.js";
 
 // ── 测试工具 ──────────────────────────────────────────────────────────────
 

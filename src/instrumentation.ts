@@ -1,408 +1,183 @@
 // src/instrumentation.ts
 //
-// OpenTelemetry SDK 初始化入口
+// OpenTelemetry SDK 初始化入口（v1.0.0 重构）
 //
-// 用法（在应用启动前通过 --import 加载）：
+// 唯一推荐初始化方式：
 //   node --import vextjs-opentelemetry/instrumentation server.js
 //
-// 特性：
-//   - 全部使用动态 import，确保缺失 optional peer dep 时优雅降级而非崩溃
-//   - 支持 top-level await（需要 "type": "module" 和 target >= ES2022）
-//   - 端点读取来源：package.json vext.otel.endpoint（可选，默认 "none"）
-//   - 不读取 OTEL_EXPORTER_OTLP_ENDPOINT 环境变量（避免隐式行为）
-//   - **默认 none 模式**：未配置 endpoint 时 SDK 初始化但不导出数据（安全默认值）
-//   - 支持导出模式：
-//       未配置 / "none"             → SDK 初始化但不导出（默认，控制台仅打印一行摘要）
-//       绝对路径（推荐）             → 本地文件，如 join(process.cwd(), "otel-data")
-//       "./relative/path"           → 相对路径本地文件（基于 process.cwd() 解析）
-//       "file:./relative/path"     → 向后兼容 file: 前缀
-//       "file:///absolute/path"    → 向后兼容 file:/// 前缀
-//       HTTP/HTTPS URL             → 标准 OTLP 网络上报
-//   - auto-instrumentations-node 为可选项，未安装时降级并输出 warning
+// 框架 CLI 等价（自动注入）：
+//   vext start / vext dev
+//
+// Docker / K8s 环境变量方式：
+//   ENV NODE_OPTIONS="--import vextjs-opentelemetry/instrumentation"
+//
+// 配置来源（优先级从高到低）：
+//   1. OTel 标准环境变量（OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT 等）
+//   2. 内置默认值（serviceName: "vext-app", protocol: "http", endpoint: "none"）
 
-import { readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
 import type {
   Instrumentation,
   InstrumentationConfig,
 } from "@opentelemetry/instrumentation";
 
-// ── 导出模式类型 ─────────────────────────────────────────────
-type ExportMode = "otlp" | "file" | "none";
-
-/**
- * 解析 endpoint 字符串的导出模式
- *
- * 支持以下格式（按检测顺序）：
- *   - "none"                          → none 模式（SDK 初始化但不导出数据，默认）
- *   - "http://..." / "https://..."    → otlp 模式（标准网络上报）
- *   - "file:./relative" / "file:///"  → file 模式（向后兼容 file: 前缀）
- *   - 绝对路径（如 join(process.cwd(), "otel-data") 的结果）→ file 模式
- *   - 相对路径（"./otel-data"）       → file 模式（基于 process.cwd() 解析）
- *   - 其他                            → otlp 模式（视为 hostname:port）
- */
-function resolveExportMode(endpoint: string): {
-  mode: ExportMode;
-  dir?: string;
-} {
-  if (endpoint === "none") {
-    return { mode: "none" };
-  }
-
-  // ── HTTP/HTTPS URL → OTLP 网络上报 ──────────────────────
-  if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
-    return { mode: "otlp" };
-  }
-
-  // ── file: 前缀 → file 模式（向后兼容）──────────────────
-  if (endpoint.startsWith("file:")) {
-    let dir: string;
-    if (endpoint.startsWith("file:///")) {
-      // 绝对路径: file:///C:/path 或 file:///home/user/path
-      try {
-        dir = new URL(endpoint).pathname;
-        // Windows: URL pathname 可能是 /C:/path，需去掉前导 /
-        if (
-          process.platform === "win32" &&
-          dir.startsWith("/") &&
-          dir[2] === ":"
-        ) {
-          dir = dir.slice(1);
-        }
-      } catch {
-        dir = endpoint.slice(7); // 兜底：直接去掉 file://
-      }
-    } else {
-      // 相对路径: file:./otel-data 或 file:otel-data
-      // 去掉 "file:" 前缀，resolve() 自动基于 cwd() 解析为绝对路径
-      dir = endpoint.slice(5);
-    }
-    return { mode: "file", dir: resolve(process.cwd(), dir) };
-  }
-
-  // ── 绝对路径 → file 模式 ───────────────────────────────
-  // 如 join(process.cwd(), "otel-data") → "E:\project\otel-data" 或 "/home/user/otel-data"
-  if (isAbsolute(endpoint)) {
-    return { mode: "file", dir: endpoint };
-  }
-
-  // ── 相对路径 → file 模式 ───────────────────────────────
-  // 如 "./otel-data" 或 "../otel-data"
-  if (
-    endpoint.startsWith("./") ||
-    endpoint.startsWith("../") ||
-    endpoint.startsWith(".\\") ||
-    endpoint.startsWith("..\\")
-  ) {
-    return { mode: "file", dir: resolve(process.cwd(), endpoint) };
-  }
-
-  // ── 其他 → OTLP 模式（可能是 hostname:port 形式）────
-  return { mode: "otlp" };
-}
-
-// ── 读取 OTLP 端点 ──────────────────────────────────────────────
-//
-// 读取来源：package.json vext.otel.endpoint 字段（可选）
-//
-// 不读取 OTEL_EXPORTER_OTLP_ENDPOINT 环境变量（避免隐式行为导致意外上报）。
-// **未配置时默认返回 "none"**：SDK 初始化但不导出数据（安全默认值）。
-// 仅在需要网络上报或文件导出时才需配置此字段。
-//
-function resolveOtlpEndpoint(): string {
-  try {
-    const pkgPath = join(process.cwd(), "package.json");
-    if (existsSync(pkgPath)) {
-      const pkg = JSON.parse(
-        readFileSync(pkgPath, "utf-8"),
-      ) as Record<string, unknown>;
-      const otelField = (
-        pkg?.vext as Record<string, unknown> | undefined
-      )?.otel as Record<string, unknown> | undefined;
-      if (typeof otelField?.endpoint === "string" && otelField.endpoint) {
-        return otelField.endpoint;
-      }
-    }
-  } catch {
-    // package.json 读取失败时静默降级，不影响启动
-  }
-  // 默认：none 模式（SDK 初始化但不导出，安全默认值）
-  return "none";
-}
-
-// ── 读取 OTLP Headers（仅从 package.json 代码级配置）─────────
-//
-// 唯一配置来源：package.json vext.otel.headers 字段（对象 → key=value,... 格式）
-// 不读取 OTEL_EXPORTER_OTLP_HEADERS 环境变量。
-//
-function resolveOtlpHeaders(): string | undefined {
-  try {
-    const pkgPath = join(process.cwd(), "package.json");
-    if (existsSync(pkgPath)) {
-      const pkg = JSON.parse(
-        readFileSync(pkgPath, "utf-8"),
-      ) as Record<string, unknown>;
-      const otelField = (
-        pkg?.vext as Record<string, unknown> | undefined
-      )?.otel as Record<string, unknown> | undefined;
-      const headers = otelField?.headers as
-        | Record<string, string>
-        | undefined;
-      if (headers && typeof headers === "object") {
-        return Object.entries(headers)
-          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-          .join(",");
-      }
-    }
-  } catch {
-    // 静默降级
-  }
-  return undefined;
-}
-
-// ── 读取采样率 ────────────────────────────────────────────────
-//
-// 来源：package.json vext.otel.sampling.ratio（0.0 ~ 1.0，默认 1.0 全量采样）
-//
-function resolveSamplingRatio(): number {
-  try {
-    const pkgPath = join(process.cwd(), "package.json");
-    if (existsSync(pkgPath)) {
-      const pkg = JSON.parse(
-        readFileSync(pkgPath, "utf-8"),
-      ) as Record<string, unknown>;
-      const otelField = (
-        pkg?.vext as Record<string, unknown> | undefined
-      )?.otel as Record<string, unknown> | undefined;
-      const sampling = otelField?.sampling as Record<string, unknown> | undefined;
-      const ratio = sampling?.ratio;
-      if (typeof ratio === "number" && ratio >= 0 && ratio <= 1) {
-        return ratio;
-      }
-    }
-  } catch {
-    // 静默降级
-  }
-  return 1.0; // 默认全量采样
-}
+import { resolveOtelConfig, headersToEnvString } from "./core/config.js";
+import {
+  resolveExportMode,
+  createFileSpanExporter,
+  createFileMetricExporter,
+  createFileLogExporter,
+  tryCreateGrpcExporters,
+} from "./core/exporter.js";
+import { getDeferredState } from "./core/deferred.js";
 
 let sdkStarted = false;
 
 try {
+  const config = resolveOtelConfig();
+
   const [
     { NodeSDK },
     { OTLPTraceExporter },
     { OTLPMetricExporter },
+    { OTLPLogExporter },
     { PeriodicExportingMetricReader },
+    { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler },
+    { BatchLogRecordProcessor, LoggerProvider },
     autoInstrumentationsResult,
     { resourceFromAttributes, detectResources, processDetector, envDetector },
     { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION },
-    { ParentBasedSampler, TraceIdRatioBasedSampler },
   ] = await Promise.all([
     import("@opentelemetry/sdk-node"),
     import("@opentelemetry/exporter-trace-otlp-http"),
     import("@opentelemetry/exporter-metrics-otlp-http"),
+    import("@opentelemetry/exporter-logs-otlp-http"),
     import("@opentelemetry/sdk-metrics"),
-    // auto-instrumentations-node 为可选 peer dep，未安装时静默降级
+    import("@opentelemetry/sdk-trace-base"),
+    import("@opentelemetry/sdk-logs"),
     import("@opentelemetry/auto-instrumentations-node").catch(() => ({
       getNodeAutoInstrumentations: null,
     })),
     import("@opentelemetry/resources"),
     import("@opentelemetry/semantic-conventions"),
-    import("@opentelemetry/sdk-trace-base"),
   ]);
 
   const { getNodeAutoInstrumentations } = autoInstrumentationsResult as {
     getNodeAutoInstrumentations:
-    | ((
-      config?: Record<string, unknown>,
-    ) => Instrumentation<InstrumentationConfig>[])
-    | null;
+      | ((config?: Record<string, unknown>) => Instrumentation<InstrumentationConfig>[])
+      | null;
   };
 
-  // ── 基础配置 ──────────────────────────────────────────────
-
-  // 返回值始终是 string（默认 "none"）
-  const baseEndpoint = resolveOtlpEndpoint();
-
-  // 若 package.json 有 headers 配置，注入为 env var（供 exporter 读取）
-  const resolvedHeaders = resolveOtlpHeaders();
-  if (resolvedHeaders) {
-    process.env.OTEL_EXPORTER_OTLP_HEADERS = resolvedHeaders;
+  // ── 注入 headers 到环境变量（供 OTLP exporter 读取）────────
+  if (config.headers && Object.keys(config.headers).length > 0) {
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = headersToEnvString(config.headers);
   }
 
+  // ── Resource 构建 ─────────────────────────────────────────
   const manualResource = resourceFromAttributes({
-    [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? "vext-app",
+    [ATTR_SERVICE_NAME]: config.serviceName,
     [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? "0.0.0",
     "deployment.environment": process.env.NODE_ENV ?? "development",
   });
-  const detectedResource = detectResources({
-    detectors: [processDetector, envDetector],
-  });
-  // manual 属性优先级高于自动检测（merge 后者覆盖前者，故 manual 作为第二参数）
+  const detectedResource = detectResources({ detectors: [processDetector, envDetector] });
   const resource = detectedResource.merge(manualResource);
 
-  // ── 采样率 ─────────────────────────────────────────────────
-  const samplingRatio = resolveSamplingRatio();
-  const samplerOption = samplingRatio < 1.0
-    ? { sampler: new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(samplingRatio) }) }
-    : {};
+  // ── 采样率 ───────────────────────────────────────────────
+  const { ratio } = config.sampling;
+  const samplerOption =
+    ratio < 1.0
+      ? { sampler: new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(ratio) }) }
+      : {};
 
-  // ── SDK 配置 ──────────────────────────────────────────────
+  // ── 延迟处理器（跨 ESM/CJS 共享，插件 setup 时配置真正的 exporter）─
+  const deferredState = getDeferredState();
 
-  const { mode: exportMode, dir: exportDir } = resolveExportMode(baseEndpoint);
+  // ── 解析导出模式（用于 instrumentation.ts 直接配置时）──────
+  const { mode: exportMode, dir: exportDir } = resolveExportMode(
+    config.endpoint,
+    config.protocol,
+  );
 
-  // 设置导出模式信号（供 /_otel/status 读取）
+  // 若 instrumentation.ts 阶段已有端点配置，立即配置延迟处理器
+  if (exportMode === "file" && exportDir) {
+    deferredState.spanProcessor.configure(
+      new BatchSpanProcessor(createFileSpanExporter(exportDir) as never),
+    );
+    deferredState.metricExporter.configure(createFileMetricExporter(exportDir) as never);
+    deferredState.logProcessor.configure(
+      new BatchLogRecordProcessor(createFileLogExporter(exportDir) as never),
+    );
+  } else if (exportMode === "otlp-grpc") {
+    const grpc = await tryCreateGrpcExporters(config.endpoint, config.headers);
+    if (grpc.ok) {
+      deferredState.spanProcessor.configure(
+        new BatchSpanProcessor(grpc.traceExporter as never),
+      );
+      deferredState.metricExporter.configure(grpc.metricExporter as never);
+    } else {
+      deferredState.spanProcessor.configure(
+        new BatchSpanProcessor(
+          new OTLPTraceExporter({ url: `${config.endpoint}/v1/traces` }),
+        ),
+      );
+      deferredState.metricExporter.configure(
+        new OTLPMetricExporter({ url: `${config.endpoint}/v1/metrics` }),
+      );
+    }
+    // gRPC 模式 Logs 降级为 HTTP
+    deferredState.logProcessor.configure(
+      new BatchLogRecordProcessor(
+        new OTLPLogExporter({ url: `${config.endpoint}/v1/logs` }),
+      ),
+    );
+  } else if (exportMode === "otlp-http") {
+    deferredState.spanProcessor.configure(
+      new BatchSpanProcessor(
+        new OTLPTraceExporter({ url: `${config.endpoint}/v1/traces` }),
+      ),
+    );
+    deferredState.metricExporter.configure(
+      new OTLPMetricExporter({ url: `${config.endpoint}/v1/metrics` }),
+    );
+    deferredState.logProcessor.configure(
+      new BatchLogRecordProcessor(
+        new OTLPLogExporter({ url: `${config.endpoint}/v1/logs` }),
+      ),
+    );
+  }
+  // exportMode === "none" → deferred 保持未配置（等待插件 setup 配置）
+
+  // 写入环境变量信号供 getOtelStatus() 读取
   process.env.VEXT_OTEL_EXPORT_MODE = exportMode;
-  if (exportDir) {
-    process.env.VEXT_OTEL_EXPORT_DIR = exportDir;
-  }
+  process.env.VEXT_OTEL_PROTOCOL = config.protocol;
+  process.env.OTEL_SERVICE_NAME = config.serviceName;
+  process.env.VEXT_OTEL_SERVICE_NAME = config.serviceName;
+  if (exportDir) process.env.VEXT_OTEL_EXPORT_DIR = exportDir;
+  if (ratio !== 1.0) process.env.OTEL_TRACES_SAMPLER_ARG = String(ratio);
 
-  let sdkOptions: ConstructorParameters<typeof NodeSDK>[0];
+  // ── LoggerProvider（Logs signal）──────────────────────────
+  // sdk-logs v0.214+ 不支持 addLogRecordProcessor()，需在构造器传入
+  const loggerProvider = new LoggerProvider({
+    resource,
+    processors: [deferredState.logProcessor],
+  });
+  // 注册为全局 LoggerProvider（供 logs.getLogger() 使用）
+  const { logs: otelLogs } = await import("@opentelemetry/api-logs");
+  otelLogs.setGlobalLoggerProvider(loggerProvider);
 
-  if (exportMode === "none") {
-    // ── None 模式：SDK 初始化但不导出数据（默认，安全静默）────
-    //
-    // Noop exporters 丢弃所有 Span/Metrics，零 I/O 开销。
-    // auto-instrumentation 仍生效（ALS trace context 可用），
-    // 但不会向控制台、文件或网络输出遥测数据。
-    //
-    const noopSpanExporter = {
-      export(
-        _spans: unknown[],
-        resultCallback: (result: { code: number }) => void,
-      ) {
-        resultCallback({ code: 0 }); // SUCCESS, discard silently
-      },
-      shutdown() { return Promise.resolve(); },
-      forceFlush() { return Promise.resolve(); },
-    };
+  // ── SDK 选项（spanProcessors/metricReaders，兼容 v2.x）────
+  const deferredMetricReader = new PeriodicExportingMetricReader({
+    exporter: deferredState.metricExporter as never,
+    exportIntervalMillis: config.metricIntervalMs,
+  });
 
-    const noopMetricExporter = {
-      export(
-        _metrics: unknown[],
-        resultCallback: (result: { code: number }) => void,
-      ) {
-        resultCallback({ code: 0 });
-      },
-      shutdown() { return Promise.resolve(); },
-      forceFlush() { return Promise.resolve(); },
-      selectAggregationTemporality() { return 1; /* CUMULATIVE */ },
-    };
+  const sdkOptions: ConstructorParameters<typeof NodeSDK>[0] = {
+    ...samplerOption,
+    resource,
+    spanProcessors: [deferredState.spanProcessor],
+    metricReaders: [deferredMetricReader],
+  };
 
-    sdkOptions = {
-      ...samplerOption,
-      resource,
-      traceExporter: noopSpanExporter as never,
-      metricReader: new PeriodicExportingMetricReader({
-        exporter: noopMetricExporter as never,
-        exportIntervalMillis: 60000, // 长间隔，noop 无需频繁触发
-      }),
-    };
-  } else if (exportMode === "file" && exportDir) {
-    // ── File 模式：写入本地 JSON 文件（本地测试）──────────
-    // 路径已由 resolveExportMode 解析为绝对路径（支持相对路径）
-    mkdirSync(exportDir, { recursive: true });
-
-    const traceFile = join(exportDir, "traces.jsonl");
-    const fileSpanExporter = {
-      export(
-        spans: Array<Record<string, unknown>>,
-        resultCallback: (result: { code: number }) => void,
-      ) {
-        try {
-          for (const span of spans) {
-            // ReadableSpan 对象含循环引用（_spanProcessor 等），不能直接 JSON.stringify。
-            // 手动提取可序列化字段。
-            const ctx =
-              typeof (span as any).spanContext === "function"
-                ? (span as any).spanContext()
-                : undefined;
-            const data = {
-              traceId: ctx?.traceId,
-              spanId: ctx?.spanId,
-              traceFlags: ctx?.traceFlags,
-              parentSpanId: span.parentSpanId,
-              name: span.name,
-              kind: span.kind,
-              startTime: span.startTime,
-              endTime: span.endTime,
-              duration: span.duration,
-              status: span.status,
-              attributes: span.attributes,
-              events: span.events,
-              links: span.links,
-              resource: (span.resource as any)?._attributes,
-              instrumentationLibrary: span.instrumentationLibrary,
-              droppedAttributesCount: span.droppedAttributesCount,
-              droppedEventsCount: span.droppedEventsCount,
-              droppedLinksCount: span.droppedLinksCount,
-            };
-            appendFileSync(traceFile, JSON.stringify(data) + "\n", "utf-8");
-          }
-          resultCallback({ code: 0 }); // SUCCESS
-        } catch {
-          resultCallback({ code: 1 }); // FAILED
-        }
-      },
-      shutdown() { return Promise.resolve(); },
-      forceFlush() { return Promise.resolve(); },
-    };
-
-    const metricsFile = join(exportDir, "metrics.jsonl");
-    const fileMetricExporter = {
-      export(
-        metrics: Array<Record<string, unknown>>,
-        resultCallback: (result: { code: number }) => void,
-      ) {
-        try {
-          const timestamp = new Date().toISOString();
-          appendFileSync(
-            metricsFile,
-            JSON.stringify({ timestamp, metrics }) + "\n",
-            "utf-8",
-          );
-          resultCallback({ code: 0 });
-        } catch {
-          resultCallback({ code: 1 });
-        }
-      },
-      shutdown() { return Promise.resolve(); },
-      forceFlush() { return Promise.resolve(); },
-      selectAggregationTemporality() { return 1; /* CUMULATIVE */ },
-    };
-
-    sdkOptions = {
-      ...samplerOption,
-      resource,
-      traceExporter: fileSpanExporter as never,
-      metricReader: new PeriodicExportingMetricReader({
-        exporter: fileMetricExporter as never,
-        exportIntervalMillis: Number(
-          process.env.OTEL_METRIC_EXPORT_INTERVAL ?? 15000,
-        ),
-      }),
-    };
-  } else {
-    // ── OTLP 模式：标准网络上报 ─────────────────────────────
-    sdkOptions = {
-      ...samplerOption,
-      resource,
-      traceExporter: new OTLPTraceExporter({
-        url: `${baseEndpoint}/v1/traces`,
-      }),
-      metricReader: new PeriodicExportingMetricReader({
-        exporter: new OTLPMetricExporter({
-          url: `${baseEndpoint}/v1/metrics`,
-        }),
-        exportIntervalMillis: Number(
-          process.env.OTEL_METRIC_EXPORT_INTERVAL ?? 15000,
-        ),
-      }),
-    };
-  }
-
-  // ── 自动检测（可选）──────────────────────────────────────
+  // ── 自动检测（可选）────────────────────────────────────────
   if (getNodeAutoInstrumentations) {
     sdkOptions.instrumentations = getNodeAutoInstrumentations({
       "@opentelemetry/instrumentation-fs": { enabled: false },
@@ -410,9 +185,9 @@ try {
   } else {
     console.warn(
       "[vextjs-opentelemetry/instrumentation] " +
-      "@opentelemetry/auto-instrumentations-node is not installed. " +
-      "Auto-instrumentation (HTTP, DB, fetch, etc.) is disabled.\n" +
-      "  npm install @opentelemetry/auto-instrumentations-node",
+        "@opentelemetry/auto-instrumentations-node is not installed. " +
+        "Auto-instrumentation (HTTP, DB, fetch, etc.) is disabled.\n" +
+        "  npm install @opentelemetry/auto-instrumentations-node",
     );
   }
 
@@ -421,26 +196,31 @@ try {
   sdk.start();
   sdkStarted = true;
 
-  // ── SDK 启动信号（供 /_otel/status 接口读取）─────────────
+  // 写入 SDK 启动信号
   process.env.VEXT_OTEL_SDK_STARTED = "1";
   if (getNodeAutoInstrumentations) {
     process.env.VEXT_OTEL_AUTO_INSTRUMENTATION = "1";
   }
 
-  console.log(
-    "[vextjs-opentelemetry] SDK initialized" +
-    (getNodeAutoInstrumentations ? " (with auto-instrumentation)" : "") +
-    (exportMode === "none"
-      ? " → no export (configure endpoint to enable)"
+  const exportDesc =
+    exportMode === "none"
+      ? "no export (configure endpoint to enable)"
       : exportMode === "file"
-        ? ` → exporting to ${exportDir}`
-        : ` → exporting to ${baseEndpoint}`),
+        ? `exporting to ${exportDir}`
+        : `exporting to ${config.endpoint} [${config.protocol}]`;
+
+  console.log(
+    `[vextjs-opentelemetry] SDK initialized` +
+      (getNodeAutoInstrumentations ? " (with auto-instrumentation)" : "") +
+      ` → ${exportDesc}`,
   );
 
   // ── 优雅关闭 ─────────────────────────────────────────────
   const shutdownHandler = () => {
-    sdk
-      .shutdown()
+    Promise.all([
+      sdk.shutdown(),
+      loggerProvider.shutdown(),
+    ])
       .then(() => console.log("[vextjs-opentelemetry] SDK shutdown complete"))
       .catch((err: Error) =>
         console.error("[vextjs-opentelemetry] SDK shutdown error:", err.message),
@@ -454,12 +234,13 @@ try {
       "[vextjs-opentelemetry/instrumentation] Failed to initialize SDK:",
       (err as Error).message,
       "\nMake sure the required packages are installed:\n" +
-      "  npm install @opentelemetry/sdk-node \\\n" +
-      "              @opentelemetry/exporter-trace-otlp-http \\\n" +
-      "              @opentelemetry/exporter-metrics-otlp-http",
+        "  npm install @opentelemetry/sdk-node \\\n" +
+        "              @opentelemetry/exporter-trace-otlp-http \\\n" +
+        "              @opentelemetry/exporter-metrics-otlp-http \\\n" +
+        "              @opentelemetry/exporter-logs-otlp-http \\\n" +
+        "              @opentelemetry/sdk-logs",
     );
   }
 }
 
-// ESM 需要显式导出以作为模块使用
-export { };
+export {};

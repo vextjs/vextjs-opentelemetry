@@ -11,6 +11,8 @@
 
 import { SeverityNumber } from "@opentelemetry/api-logs";
 import type { Logger } from "@opentelemetry/api-logs";
+import type { Attributes } from "@opentelemetry/api";
+import type { OtelLogBridge, OtelLogBridgeOptions } from "./core/types.js";
 import { hostname } from "node:os";
 
 // ── 内部常量 ─────────────────────────────────────────────────
@@ -69,7 +71,7 @@ export interface StructuredLogFormatterOptions<
      * @example
      * getTraceFields: (meta) => ({
      *   trace_id: (meta as any).ctx?.trace_id ?? '',
-     *   span:     (meta as any).ctx?.span ?? '',
+     *   span:     (meta as any).ctx?.span_name ?? '',   // ctx.span_name 由 createEggMiddleware 注入
      *   endpoint: (meta as any).ctx?.endpoint ?? '',
      *   latency_ms: (meta as any).ctx?.latency_ms ?? 0,
      *   user_id:  (meta as any).ctx?.user_id ?? '',
@@ -115,7 +117,7 @@ export interface StructuredLogFormatterOptions<
  *   serviceName: 'chat',
  *   getTraceFields: (meta) => ({
  *     trace_id: meta.ctx?.trace_id ?? '',
- *     span:     meta.ctx?.span ?? '',
+ *     span:     meta.ctx?.span_name ?? '',   // ctx.span_name 由 createEggMiddleware 注入
  *   }),
  *   getCustomFields: (meta) => ({
  *     'feature.flag': meta.ctx?.feature_flag ?? '',
@@ -199,25 +201,8 @@ export function createStructuredLogFormatter<
 
 // ── F-02: createOtelLogBridge ─────────────────────────────────
 
-/**
- * OTel LogRecord 桥接返回值接口
- */
-export interface OtelLogBridge {
-    /**
-     * 向 OTel Logs SDK 发送一条 LogRecord（Schema B）
-     *
-     * 若 `getLogger()` 返回 `null` / `undefined`（SDK 尚未初始化），静默忽略。
-     *
-     * @param level      egg-logger 的级别字符串（'debug'/'info'/'warn'/'error' 等）
-     * @param message    日志正文（对应 LogRecord.body）
-     * @param attributes 可选 OTel Span 属性（如 `endpoint`、`user.id`）
-     */
-    emit(
-        level: string,
-        message: string,
-        attributes?: Record<string, string>,
-    ): void;
-}
+// 类型从 core/types.ts 统一定义，此处重新导出供 ./log 子路径用户直接使用
+export type { OtelLogBridge, OtelLogBridgeOptions } from "./core/types.js";
 
 /**
  * 创建 OTel LogRecord 桥接（Schema B）
@@ -226,31 +211,36 @@ export interface OtelLogBridge {
  * `getLogger` 工厂函数（在 SDK 初始化前调用时可返回 null/undefined 以静默 noop）。
  *
  * @param getLogger 返回 OTel `Logger` 实例的工厂函数；返回 null/undefined 时 emit 为 noop
+ * @param options   可选配置，支持 `globalAttributes` 全局静态字段
  * @returns `{ emit(level, message, attributes?) }` 桥接对象
  *
  * @example
- * // Egg.js config/config.default.ts
- * import { createOtelLogBridge } from 'vextjs-opentelemetry/log';
+ * import { createOtelLogBridge, getOtelLogger } from 'vextjs-opentelemetry/log';
  *
- * const bridge = createOtelLogBridge(() => (globalThis as any)._otelLogger);
- *
- * // 在 formatter 中调用：
- * bridge.emit(level, message, { endpoint, 'user.id': userId });
+ * const bridge = createOtelLogBridge(() => getOtelLogger("chat"), {
+ *   globalAttributes: {
+ *     "deployment.environment": process.env.NODE_ENV ?? "production",
+ *     "app.version": "1.2.3",
+ *   },
+ * });
+ * bridge.emit("error", "db timeout", { "db.system": "postgres", "db.latency_ms": 3200 });
  */
 export function createOtelLogBridge(
     getLogger: () => Pick<Logger, "emit"> | null | undefined,
+    options?: OtelLogBridgeOptions,
 ): OtelLogBridge {
+    const globalAttrs = options?.globalAttributes;
+
     return {
         emit(
             level: string,
             message: string,
-            attributes?: Record<string, string>,
+            attributes?: Attributes,
         ): void {
             let logger: Pick<Logger, "emit"> | null | undefined;
             try {
                 logger = getLogger();
             } catch {
-                // getLogger 本身抛错时静默跳过，不影响主链路
                 return;
             }
 
@@ -260,12 +250,17 @@ export function createOtelLogBridge(
             const severityNumber =
                 LEVEL_TO_SEVERITY[level.toLowerCase()] ?? SeverityNumber.UNSPECIFIED;
 
+            const merged: Attributes | undefined =
+                globalAttrs || attributes
+                    ? { ...globalAttrs, ...attributes }
+                    : undefined;
+
             logger.emit({
                 severityText,
                 severityNumber,
                 body: message,
-                ...(attributes && Object.keys(attributes).length > 0
-                    ? { attributes }
+                ...(merged && Object.keys(merged).length > 0
+                    ? { attributes: merged }
                     : {}),
             });
         },

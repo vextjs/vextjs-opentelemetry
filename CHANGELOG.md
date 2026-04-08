@@ -10,6 +10,102 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.0.0] - 2026-04-07
+
+### ⚠️ Breaking Changes（完全重构，不兼容 0.x）
+
+- **`initOtel()` 彻底移除**：`vextjs-opentelemetry/init` 子路径删除
+  - Egg.js/Koa/Express 用户请直接使用 `@opentelemetry/sdk-node` 初始化 SDK
+  - VextJS 用户使用 `instrumentation.ts` + `--import`（vext CLI 自动注入）
+- **`opentelemetryPlugin` 移至 `/vextjs` 子路径**（已在 0.1.5 预告）
+  - 迁移：`import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs"`
+- **`./log` 子路径删除**：`createStructuredLogFormatter` / `createOtelLogBridge` 已移除
+- 旧内部文件（`plugin.ts` / `middleware.ts` / `core.ts` / `types.ts`）全部合并重组，不再对外暴露
+
+### Added
+
+- **`vextjs-opentelemetry/egg` 适配器** — Egg.js 专属子路径
+  - `createEggMiddleware` — `createKoaMiddleware` 的别名
+  - `defineEggMiddleware(options)` — 符合 Egg.js `(options, app) => Middleware` 惯用签名的工厂函数
+
+- **Span 工具 API**（主入口直接导出，框架无关）
+  - `withSpan(name, fn, options?)` — 追踪任意操作，自动 end/recordException/setStatus
+  - `createWithSpan(tracerName)` — 创建绑定具名 tracer 的 withSpan 函数
+  - `getActiveSpan()` — 获取当前活跃 Span
+  - `getActiveTraceId()` — 获取当前 traceId（用于日志关联）
+  - `getActiveSpanId()` — 获取当前 spanId
+  - `getOtelStatus()` — 获取 SDK 运行状态（sdk/serviceName/exportMode/exportTarget/protocol/samplingRatio）
+
+- **多协议上报支持**（`src/core/exporter.ts`）
+  - `protocol: "http" | "grpc"`（默认 `"http"`）
+  - gRPC：动态 import `@opentelemetry/exporter-trace-otlp-grpc`，未安装时降级 HTTP + warning
+  - 本地文件模式：endpoint 设为 `"file"` / `"local"` / 相对路径 / 绝对路径 → 写入 JSONL 文件，供测试使用
+  - `"none"` 模式：SDK 初始化但不导出数据（安全默认值）
+
+- **统一配置层**（`src/core/config.ts`）
+  - 优先级：`package.json vext.otel.*` > OTel 标准环境变量 > 内置默认值
+  - 支持字段：`serviceName / endpoint / protocol / headers / sampling.ratio / metricIntervalMs`
+
+- **`app.otel.getTraceId()` / `app.otel.getStatus()`**（VextJS 适配器新增）
+
+### Changed
+
+- **三层架构**：`instrumentation.ts`（SDK 初始化）→ `src/core/`（框架无关核心）→ `src/adapters/`（框架适配器）
+- `src/core/http-core.ts` 提取通用 HTTP 追踪三阶段状态机（`onRequestStart/onRequestEnd/onRequestError`），所有适配器共用
+- `OtelAppExtension`（VextJS 适配器）新增 `getTraceId()` 和 `getStatus()` 方法
+- `OpenTelemetryPluginOptions`（VextJS）移至 `src/adapters/vextjs.ts`，不再在 `src/core/types.ts` 中（含 VextRequest 依赖）
+
+### Migration Guide
+
+**VextJS 用户**
+
+```typescript
+// before
+import { opentelemetryPlugin } from "vextjs-opentelemetry";
+// after
+import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
+```
+
+**Egg.js 用户**
+
+```javascript
+// before (app/otel-init.cjs)
+const { initOtel } = require('vextjs-opentelemetry/init');
+initOtel({ serviceName: 'chat', endpoint: '...' });
+
+// after: 直接使用 @opentelemetry/sdk-node
+const { NodeSDK } = require('@opentelemetry/sdk-node');
+const { resourceFromAttributes } = require('@opentelemetry/resources');
+const { ATTR_SERVICE_NAME } = require('@opentelemetry/semantic-conventions');
+// ... 配置 traceExporter / metricReader / instrumentations
+const sdk = new NodeSDK({ resource: resourceFromAttributes({ [ATTR_SERVICE_NAME]: 'chat' }), ... });
+sdk.start();
+process.env.VEXT_OTEL_SDK_STARTED = '1';
+```
+
+**Egg.js 中间件**（无需改动，路径一致）
+
+```typescript
+// 无需改动
+import { createKoaMiddleware } from 'vextjs-opentelemetry/koa';
+// 或使用专属适配器
+import { defineEggMiddleware } from 'vextjs-opentelemetry/egg';
+export default defineEggMiddleware({ serviceName: 'chat' });
+```
+
+**通用 Span 追踪**
+
+```typescript
+// 主入口直接使用（所有框架）
+import { withSpan, getActiveTraceId } from 'vextjs-opentelemetry';
+const result = await withSpan('user.query', (span) => {
+  span.setAttribute('user.id', id);
+  return db.findUser(id);
+});
+```
+
+---
+
 ## [0.1.5] - 2026-04-08
 
 ### Breaking Change
