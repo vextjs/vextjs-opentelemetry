@@ -459,6 +459,12 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
         bridgeAppLoggerToOtel(app, logger);
       }
 
+      // /_otel/status 状态接口（adapter 层注册，优先于全局中间件执行）
+      (app as unknown as { adapter: { registerRoute(method: string, path: string, handlers: unknown[]): void } })
+        .adapter.registerRoute("GET", "/_otel/status", [
+          defineMiddleware((_req, res) => { res.json(getOtelStatus()); }),
+        ]);
+
       // 全局追踪中间件
       app.use(createTracingMiddleware(metrics, options));
 
