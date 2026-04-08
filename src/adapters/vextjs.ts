@@ -196,12 +196,22 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
 
     const startTime = performance.now();
 
-    if (metricsEnabled) {
-      metrics.httpActiveRequests.add(1, { "http.method": req.method });
-    }
-
     const activeSpan = trace.getActiveSpan();
     const shouldTrace = tracingEnabled && !isIgnoredPath(req.path);
+    const shouldMetric = metricsEnabled && !isIgnoredPath(req.path);
+
+    if (shouldMetric) {
+      metrics.httpActiveRequests.add(1, { "http.method": req.method });
+      // 请求体大小（Content-Length 存在时记录）
+      const rawCL = req.headers?.['content-length'];
+      const requestSize = rawCL ? parseInt(String(rawCL), 10) : undefined;
+      if (requestSize !== undefined && !isNaN(requestSize) && metrics.httpRequestSize) {
+        metrics.httpRequestSize.record(requestSize, {
+          "http.method": req.method,
+          "http.route": req.path,
+        });
+      }
+    }
 
     if (shouldTrace && activeSpan?.isRecording()) {
       const extra =
@@ -237,7 +247,7 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       const statusCode = res.statusCode ?? 200;
       const route = String(req.route ?? req.path);
 
-      if (metricsEnabled) {
+      if (shouldMetric) {
         const labels = {
           "http.method": req.method,
           "http.status_code": statusCode,
@@ -247,6 +257,16 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
         metrics.httpRequestTotal.add(1, labels);
         metrics.httpRequestDuration.record(duration, labels);
         metrics.httpActiveRequests.add(-1, { "http.method": req.method });
+        // 响应体大小（Content-Length 存在时记录）
+        const rawRespCL = (res as unknown as { getHeader?(k: string): unknown }).getHeader?.('content-length')
+          ?? (res as unknown as { headers?: Record<string, unknown> }).headers?.['content-length'];
+        const responseSize = rawRespCL ? parseInt(String(rawRespCL), 10) : undefined;
+        if (responseSize !== undefined && !isNaN(responseSize) && metrics.httpResponseSize) {
+          metrics.httpResponseSize.record(responseSize, {
+            "http.method": req.method,
+            "http.status_code": statusCode,
+          });
+        }
       }
 
       if (shouldTrace && activeSpan?.isRecording()) {
@@ -273,7 +293,7 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       const duration = Math.round(performance.now() - startTime);
       const route = String(req.route ?? req.path);
 
-      if (metricsEnabled) {
+      if (shouldMetric) {
         const labels = {
           "http.method": req.method,
           "http.status_code": 500,
@@ -417,6 +437,7 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
       const durationBuckets = options.metrics?.durationBuckets ?? [
         5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000,
       ];
+      const sizeBuckets = [100, 1_024, 10_240, 102_400, 1_048_576, 10_485_760];
 
       const httpRequestDuration = meter.createHistogram("http.server.duration", {
         description: "HTTP request duration in milliseconds",
@@ -429,8 +450,24 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
       const httpActiveRequests = meter.createUpDownCounter("http.server.active_requests", {
         description: "Number of active HTTP requests",
       });
+      const httpRequestSize = meter.createHistogram("http.server.request.size", {
+        description: "HTTP request body size in bytes",
+        unit: "By",
+        advice: { explicitBucketBoundaries: sizeBuckets },
+      });
+      const httpResponseSize = meter.createHistogram("http.server.response.size", {
+        description: "HTTP response body size in bytes",
+        unit: "By",
+        advice: { explicitBucketBoundaries: sizeBuckets },
+      });
 
-      const metrics: OtelMetrics = { httpRequestDuration, httpRequestTotal, httpActiveRequests };
+      const metrics: OtelMetrics = {
+        httpRequestDuration,
+        httpRequestTotal,
+        httpActiveRequests,
+        httpRequestSize,
+        httpResponseSize,
+      };
 
       // withSpan 绑定当前服务 tracer
       const boundWithSpan: OtelAppExtension["withSpan"] = (name, fn, spanOptions) =>

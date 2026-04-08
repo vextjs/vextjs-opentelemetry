@@ -43,6 +43,10 @@ export interface OtelHttpContext {
   requestId: string | undefined;
   /** 原始请求头（用于 extraAttributes 等回调动态读取） */
   headers: Record<string, string | string[] | undefined>;
+  /** 请求体大小（bytes），来自 Content-Length 请求头；未提供时为 undefined */
+  requestSize?: number;
+  /** 响应体大小（bytes），来自 Content-Length 响应头；由适配器在 onRequestEnd 前写入 */
+  responseSize?: number;
 }
 
 // ── HTTP 追踪选项 ─────────────────────────────────────────────
@@ -174,6 +178,10 @@ export interface OtelMetrics {
   httpRequestTotal: Counter;
   /** 当前活跃请求数 — http.server.active_requests */
   httpActiveRequests: UpDownCounter;
+  /** HTTP 请求体大小直方图（bytes）— http.server.request.size */
+  httpRequestSize?: Histogram;
+  /** HTTP 响应体大小直方图（bytes）— http.server.response.size */
+  httpResponseSize?: Histogram;
 }
 
 // ── VextJS app.otel 扩展类型 ──────────────────────────────────

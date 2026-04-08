@@ -814,7 +814,8 @@ describe("createTracingMiddleware", () => {
       expect(mockSpan.setAttributes).toHaveBeenCalled();
     });
 
-    it("ignored 路径仍统计 HTTP 指标", async () => {
+    it("ignored 路径不记录 HTTP 指标（同时抑制 Trace 和 Metrics）", async () => {
+      vi.clearAllMocks();
       const metrics = createMockMetrics();
       const middleware = createTracingMiddleware(metrics, {
         tracing: { ignorePaths: ["/health"] },
@@ -824,10 +825,7 @@ describe("createTracingMiddleware", () => {
 
       await (middleware as Function)(req, res, async () => {});
 
-      expect(mockCounter.add).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({ "http.status_code": 200 }),
-      );
+      expect(mockCounter.add).not.toHaveBeenCalled();
     });
 
     it("ignorePaths 为空数组时不影响正常追踪", async () => {

@@ -96,15 +96,15 @@ describe("createHonoMiddleware", () => {
     );
   });
 
-  it("ignorePaths 匹配时 span 不被标注（指标仍记录）", async () => {
+  it("ignorePaths 匹配时 span 不被标注且指标也不记录", async () => {
     const app = new Hono();
     app.use(createHonoMiddleware({ tracing: { ignorePaths: ["/health"] } }));
     app.get("/health", (c) => c.text("ok"));
     await sendRequest(app, "/health");
     // span 标注被跳过（shouldTrace=false — setAttributes 不调用）
     expect(mockSpan.setAttributes).not.toHaveBeenCalled();
-    // 但指标仍记录
-    expect(mockCounter.add).toHaveBeenCalled();
+    // 指标也不记录（shouldMetric=false）
+    expect(mockCounter.add).not.toHaveBeenCalled();
   });
 
   it("spanNameResolver 被调用时更新 Span 名称", async () => {

@@ -10,6 +10,35 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.0.2] - 2026-04-08
+
+### Fixed
+
+- **`ignorePaths` 未抑制 Metrics 上报**（`src/core/http-core.ts`）
+  - `ignorePaths` 原本只跳过 Span 创建（`shouldTrace=false`），但 Metrics（duration histogram、request counter、active requests）仍会对被忽略路径（如 `/health`）进行记录，导致监控面板出现健康检查噪声
+  - 新增 `CoreRequestState.shouldMetric` 字段：与 `shouldTrace` 同样受 `ignorePaths` 过滤
+  - `onRequestStart` 中仅当 `shouldMetric=true` 时递增活跃请求数
+  - `onRequestEnd` / `onRequestError` 中将 `if (metricsEnabled)` 改为 `if (state.shouldMetric)`
+  - `ignorePaths` 现在**同时抑制 Trace 和 Metrics**，不再产生健康检查等路径的噪声数据
+
+### Added
+
+- **P1 指标：`http.server.request.size` / `http.server.response.size` Histograms**（`src/core/http-core.ts`、`src/adapters/koa.ts`、`src/adapters/vextjs.ts`）
+  - 新增两个 Histogram 指标，用于记录 HTTP 请求/响应体字节数
+  - **Koa/Egg 适配器**：`http.server.request.size` 从 `Content-Length` 请求头读取（`ctx.request?.length`），标签 `http.method + http.route`
+  - **VextJS 适配器**：同样记录 requestSize（从 `req.headers['content-length']`）和 responseSize（从 `res.getHeader('content-length')`）
+  - `http.server.response.size`：标签 `http.method + http.status_code`
+  - 桶边界：`[100, 1024, 10240, 102400, 1048576, 10485760]`（100B/1KB/10KB/100KB/1MB/10MB）
+  - 仅在值非 `undefined` 时记录（Content-Length 可选，PUT/POST 以外常为空）
+  - `ignorePaths` 同样抑制 size 指标记录（通过 `shouldMetric` 控制）
+  - `OtelMetrics` 接口新增 `httpRequestSize?: Histogram` 和 `httpResponseSize?: Histogram`（可选字段，向后兼容）
+
+- **Node.js Runtime 指标**（`chat/user/payment/search` otel-init.cjs）
+  - 引入 `@opentelemetry/instrumentation-runtime-node`（各服务 `package.json` 已添加依赖）
+  - 自动上报：`process.cpu.usage`、`process.memory.usage`（heap_used/rss）、`nodejs.eventloop.lag`、`nodejs.gc.duration/count`
+
+---
+
 ## [1.0.1] - 2026-04-08
 
 ### Fixed

@@ -184,6 +184,8 @@ describe("opentelemetryPlugin", () => {
           httpRequestDuration: mockHistogram,
           httpRequestTotal: mockCounter,
           httpActiveRequests: mockUpDownCounter,
+          httpRequestSize: mockHistogram,
+          httpResponseSize: mockHistogram,
         },
       }));
     });

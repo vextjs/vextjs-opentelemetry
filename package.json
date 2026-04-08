@@ -1,6 +1,6 @@
 {
   "name": "vextjs-opentelemetry",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Framework-agnostic OpenTelemetry SDK wrapper — zero-config traces, metrics, Span API and multi-framework adapters",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -84,6 +84,7 @@
     "@opentelemetry/exporter-trace-otlp-grpc": "^0.214.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.214.0",
     "@opentelemetry/instrumentation": "^0.214.0",
+    "@opentelemetry/instrumentation-runtime-node": "^0.27.0",
     "@opentelemetry/otlp-transformer": "^0.214.0",
     "@opentelemetry/resources": "^2.6.1",
     "@opentelemetry/sdk-logs": "^0.214.0",

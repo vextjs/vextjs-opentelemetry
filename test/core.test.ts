@@ -81,16 +81,18 @@ describe("buildCoreHandlers", () => {
       expect(state.startTime).toBeGreaterThan(0);
     });
 
-    it("ignorePaths 字符串完全匹配时 shouldTrace=false", () => {
+    it("ignorePaths 字符串完全匹配时 shouldTrace=false 且 shouldMetric=false", () => {
       const handlers = buildCoreHandlers({ tracing: { ignorePaths: ["/health"] } });
       const state = handlers.onRequestStart(makeCtx({ path: "/health" }));
       expect(state.shouldTrace).toBe(false);
+      expect(state.shouldMetric).toBe(false);
     });
 
-    it("ignorePaths 正则匹配时 shouldTrace=false", () => {
+    it("ignorePaths 正则匹配时 shouldTrace=false 且 shouldMetric=false", () => {
       const handlers = buildCoreHandlers({ tracing: { ignorePaths: [/^\/internal\//] } });
       const state = handlers.onRequestStart(makeCtx({ path: "/internal/debug" }));
       expect(state.shouldTrace).toBe(false);
+      expect(state.shouldMetric).toBe(false);
     });
 
     it("tracing.enabled=false 时 shouldTrace=false", () => {

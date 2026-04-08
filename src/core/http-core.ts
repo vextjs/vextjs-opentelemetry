@@ -17,11 +17,16 @@ import type { OtelHttpContext, HttpOtelOptions, OnEndInfo } from "./types.js";
 
 const DEFAULT_DURATION_BUCKETS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
 
+// 请求/响应体大小分桶（字节）：100B / 1KB / 10KB / 100KB / 1MB / 10MB
+const DEFAULT_SIZE_BUCKETS = [100, 1_024, 10_240, 102_400, 1_048_576, 10_485_760];
+
 // ── 指标名称（遵循 OTEL 语义约定）──────────────────────────
 
-const METRIC_DURATION = "http.server.duration";
-const METRIC_TOTAL = "http.server.request.total";
-const METRIC_ACTIVE = "http.server.active_requests";
+const METRIC_DURATION  = "http.server.duration";
+const METRIC_TOTAL     = "http.server.request.total";
+const METRIC_ACTIVE    = "http.server.active_requests";
+const METRIC_REQ_SIZE  = "http.server.request.size";
+const METRIC_RESP_SIZE = "http.server.response.size";
 
 // ── 公开类型 ─────────────────────────────────────────────────
 
@@ -37,6 +42,7 @@ const METRIC_ACTIVE = "http.server.active_requests";
 export interface CoreRequestState {
   readonly startTime: number;
   readonly shouldTrace: boolean;
+  readonly shouldMetric: boolean;
   readonly activeSpan: Span | undefined;
 }
 
@@ -106,6 +112,16 @@ export function buildCoreHandlers(
   const httpActiveRequests = meter.createUpDownCounter(METRIC_ACTIVE, {
     description: "Current active HTTP server requests",
   });
+  const httpRequestSize = meter.createHistogram(METRIC_REQ_SIZE, {
+    description: "HTTP server request body size (bytes)",
+    unit: "By",
+    advice: { explicitBucketBoundaries: DEFAULT_SIZE_BUCKETS },
+  });
+  const httpResponseSize = meter.createHistogram(METRIC_RESP_SIZE, {
+    description: "HTTP server response body size (bytes)",
+    unit: "By",
+    advice: { explicitBucketBoundaries: DEFAULT_SIZE_BUCKETS },
+  });
 
   function isIgnoredPath(urlPath: string): boolean {
     return ignorePaths.some((pattern) =>
@@ -137,12 +153,16 @@ export function buildCoreHandlers(
     onRequestStart(ctx: OtelHttpContext): CoreRequestState {
       const startTime = performance.now();
 
-      if (metricsEnabled) {
-        httpActiveRequests.add(1, { "http.method": ctx.method });
-      }
-
       const shouldTrace = tracingEnabled && !isIgnoredPath(ctx.path);
+      const shouldMetric = metricsEnabled && !isIgnoredPath(ctx.path);
       const activeSpan = trace.getActiveSpan();
+
+      if (shouldMetric) {
+        httpActiveRequests.add(1, { "http.method": ctx.method });
+        if (ctx.requestSize !== undefined) {
+          httpRequestSize.record(ctx.requestSize, { "http.method": ctx.method });
+        }
+      }
 
       if (shouldTrace && activeSpan?.isRecording()) {
         const extra = resolveExtraAttributes(ctx);
@@ -153,7 +173,7 @@ export function buildCoreHandlers(
         });
       }
 
-      return { startTime, shouldTrace, activeSpan };
+      return { startTime, shouldTrace, shouldMetric, activeSpan };
     },
 
     onRequestEnd(state: CoreRequestState, ctx: OtelHttpContext, statusCode: number): void {
@@ -178,7 +198,7 @@ export function buildCoreHandlers(
         }
       }
 
-      if (metricsEnabled) {
+      if (state.shouldMetric) {
         const labels = {
           "http.method": ctx.method,
           "http.status_code": statusCode,
@@ -188,6 +208,9 @@ export function buildCoreHandlers(
         httpRequestTotal.add(1, labels);
         httpRequestDuration.record(duration, labels);
         httpActiveRequests.add(-1, { "http.method": ctx.method });
+        if (ctx.responseSize !== undefined) {
+          httpResponseSize.record(ctx.responseSize, { "http.method": ctx.method, "http.status_code": statusCode });
+        }
       }
 
       if (options.onEnd) {
@@ -219,7 +242,7 @@ export function buildCoreHandlers(
         });
       }
 
-      if (metricsEnabled) {
+      if (state.shouldMetric) {
         const labels = {
           "http.method": ctx.method,
           "http.status_code": 500,

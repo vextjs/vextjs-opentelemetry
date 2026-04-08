@@ -75,6 +75,7 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
             route: undefined, // 路由匹配在 await next() 之后完成
             requestId,
             headers: ctx.headers as Record<string, string | string[] | undefined>,
+            requestSize: ctx.request?.length,
         };
 
         // ── 已有 active span（HTTP auto-instrumentation 已创建），或追踪关闭 ──
@@ -86,6 +87,7 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
                 const finalCtx: OtelHttpContext = {
                     ...otelCtx,
                     route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
+                    responseSize: ctx.length,
                 };
                 handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200);
             } catch (err) {
@@ -113,7 +115,7 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
 
                     const routerPath =
                         (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path;
-                    const finalCtx: OtelHttpContext = { ...otelCtx, route: routerPath };
+                    const finalCtx: OtelHttpContext = { ...otelCtx, route: routerPath, responseSize: ctx.length };
                     // 路由匹配完成后，用正确的路由模板更新 span 名
                     const finalName = spanResolver
                         ? spanResolver(finalCtx)

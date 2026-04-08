@@ -101,12 +101,12 @@ describe("createFastifyPlugin", () => {
     expect(mockSpan.recordException).toHaveBeenCalled();
   });
 
-  it("ignorePaths 匹配时 span 不被标注（指标仍记录）", async () => {
+  it("ignorePaths 匹配时 span 不被标注且指标也不记录", async () => {
     const fastify = await buildApp({ tracing: { ignorePaths: ["/health"] } });
     fastify.get("/health", async () => "ok");
     await fastify.inject({ method: "GET", url: "/health" });
     expect(mockSpan.setAttributes).not.toHaveBeenCalled();
-    expect(mockCounter.add).toHaveBeenCalled();
+    expect(mockCounter.add).not.toHaveBeenCalled();
   });
 
   it("spanNameResolver 被调用时更新 Span 名称", async () => {
