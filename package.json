@@ -1,6 +1,6 @@
 {
   "name": "vextjs-opentelemetry",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Framework-agnostic OpenTelemetry SDK wrapper — zero-config traces, metrics, Span API and multi-framework adapters",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -102,12 +102,24 @@
     "vextjs": "^0.2.5"
   },
   "peerDependenciesMeta": {
-    "express": { "optional": true },
-    "koa": { "optional": true },
-    "hono": { "optional": true },
-    "fastify": { "optional": true },
-    "egg": { "optional": true },
-    "vextjs": { "optional": true }
+    "express": {
+      "optional": true
+    },
+    "koa": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "fastify": {
+      "optional": true
+    },
+    "egg": {
+      "optional": true
+    },
+    "vextjs": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

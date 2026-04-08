@@ -10,6 +10,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.0.1] - 2026-04-08
+
+### Fixed
+
+- **Egg access log 中 traceId 字段始终为 `-`**（`src/adapters/egg.ts`）
+  - Egg access log 格式为 `[userId/ip/traceId/latency]`，第三段来自 `ctx.tracer.traceId`（Egg 内置 EggLogger tracer），而非 `ctx.trace_id`
+  - `wrappedNext` 设置 `ctx.trace_id` 后，同步写入 `ctx.tracer.traceId`，使 access log 正确显示 OTel trace_id
+  - VextJS 适配器不受影响（使用 ALS + logger mixin，不经过 Egg tracer）
+
+---
+
 ## [1.0.0] - 2026-04-07
 
 ### ⚠️ Breaking Changes（完全重构，不兼容 0.x）
@@ -281,7 +292,9 @@ const result = await withSpan('user.query', (span) => {
 
 ---
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.3...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.1...HEAD
+[1.0.1]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.0...vextjs-opentelemetry@1.0.1
+[1.0.0]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.5...vextjs-opentelemetry@1.0.0
 [0.1.3]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.2...vextjs-opentelemetry@0.1.3
 [0.1.2]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.1...vextjs-opentelemetry@0.1.2
 [0.1.1]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.0...vextjs-opentelemetry@0.1.1

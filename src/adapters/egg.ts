@@ -93,6 +93,10 @@ export function createEggMiddleware(otelOptions: EggHttpOtelOptions = {}) {
       const wrappedNext = async () => {
         const rawTraceId = trace.getActiveSpan()?.spanContext().traceId ?? "";
         ctx.trace_id = rawTraceId !== ZERO_TRACE_ID ? rawTraceId : "";
+        // 同步到 Egg 内置 tracer.traceId，使 access log 中第三段显示 OTel trace_id
+        if (ctx.trace_id && ctx.tracer && typeof ctx.tracer === "object") {
+          ctx.tracer.traceId = ctx.trace_id;
+        }
         return next();
       };
 
