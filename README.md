@@ -50,6 +50,9 @@ npm install @opentelemetry/instrumentation-http \
 
 > **为什么默认用 gRPC h2c？** `@grpc/grpc-js` 与部分自建采集器的 h2c 握手不兼容（永远 CONNECTING）。本实现直接用 `node:http2`，绕开此问题，兼容性更好。
 
+> **导出日志策略**：默认只保留**启动摘要**、**首次失败告警**与**失败后的首次恢复提示**。
+> 不会为每一批成功导出持续打印 `Trace/Metrics/Logs export OK`，避免在长时间运行的服务中刷屏。
+
 ---
 
 ## VextJS 框架

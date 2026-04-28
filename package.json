@@ -1,6 +1,6 @@
 {
   "name": "vextjs-opentelemetry",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Framework-agnostic OpenTelemetry SDK wrapper — zero-config traces, metrics, Span API and multi-framework adapters",
   "type": "module",
   "main": "./dist/index.cjs",

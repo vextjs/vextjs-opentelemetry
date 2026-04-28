@@ -23,6 +23,48 @@ import {
 } from "./exporter.js";
 import { getDeferredState } from "./deferred.js";
 
+type ExportSignalState = "idle" | "healthy" | "failing";
+
+interface ExportSignalLogger {
+  onSuccess(): void;
+  onFailure(error: unknown): void;
+}
+
+function formatExportError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+export function createExportSignalLogger(
+  signalName: string,
+  transportName: string,
+  logger: Pick<Console, "info" | "warn"> = console,
+): ExportSignalLogger {
+  let state: ExportSignalState = "idle";
+
+  return {
+    onSuccess() {
+      if (state === "failing") {
+        logger.info(
+          `[vextjs-opentelemetry] ${signalName} export recovered (${transportName})`,
+        );
+      }
+      state = "healthy";
+    },
+
+    onFailure(error: unknown) {
+      if (state !== "failing") {
+        logger.warn(
+          `[vextjs-opentelemetry] ${signalName} export FAILED (${transportName}): ${formatExportError(error)}`,
+        );
+      }
+      state = "failing";
+    },
+  };
+}
+
 export interface AttachExporterConfig {
   /** 导出目标：文件路径 / OTLP URL / "file" / "none"（同 instrumentation.ts endpoint 语义） */
   endpoint: string;
@@ -190,6 +232,9 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
       if (useInsecure) {
         // ── 分支 A：insecure=true → node:http2 h2c（兼容自建 collector）──
         const http2 = await import("node:http2");
+        const traceExportLogger = createExportSignalLogger("Trace", "grpc h2c");
+        const metricsExportLogger = createExportSignalLogger("Metrics", "grpc h2c");
+        const logsExportLogger = createExportSignalLogger("Logs", "grpc h2c");
 
         // 惰性单例 h2c 会话工厂（断连自动重建）
         function makeSessionFactory(url: string) {
@@ -245,8 +290,14 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
                 const body = ProtobufTraceSerializer.serializeRequest(spans as never);
                 if (!body?.length) { cb({ code: ExportResultCode.SUCCESS }); return; }
                 grpcSend(getSession, TRACE_PATH, body)
-                  .then(() => { console.log("[vextjs-opentelemetry] Trace export OK (grpc h2c)"); cb({ code: ExportResultCode.SUCCESS }); })
-                  .catch(err => { console.warn("[vextjs-opentelemetry] Trace export FAILED:", err.message); cb({ code: ExportResultCode.FAILED, error: err }); });
+                  .then(() => {
+                    traceExportLogger.onSuccess();
+                    cb({ code: ExportResultCode.SUCCESS });
+                  })
+                  .catch(err => {
+                    traceExportLogger.onFailure(err);
+                    cb({ code: ExportResultCode.FAILED, error: err });
+                  });
               },
               shutdown() { return Promise.resolve(); },
             } as never),
@@ -259,8 +310,14 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
               const body = ProtobufMetricsSerializer.serializeRequest(metrics as never);
               if (!body?.length) { cb({ code: ExportResultCode.SUCCESS }); return; }
               grpcSend(getSession, METRIC_PATH, body)
-                .then(() => { console.log("[vextjs-opentelemetry] Metrics export OK (grpc h2c)"); cb({ code: ExportResultCode.SUCCESS }); })
-                .catch(err => { console.warn("[vextjs-opentelemetry] Metrics export FAILED:", err.message); cb({ code: ExportResultCode.FAILED, error: err }); });
+                .then(() => {
+                  metricsExportLogger.onSuccess();
+                  cb({ code: ExportResultCode.SUCCESS });
+                })
+                .catch(err => {
+                  metricsExportLogger.onFailure(err);
+                  cb({ code: ExportResultCode.FAILED, error: err });
+                });
             },
             shutdown() { return Promise.resolve(); },
             forceFlush() { return Promise.resolve(); },
@@ -275,8 +332,14 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
                 const body = ProtobufLogsSerializer.serializeRequest(logs as never);
                 if (!body?.length) { cb({ code: ExportResultCode.SUCCESS }); return; }
                 grpcSend(getSession, LOG_PATH, body)
-                  .then(() => { console.log("[vextjs-opentelemetry] Logs export OK (grpc h2c)"); cb({ code: ExportResultCode.SUCCESS }); })
-                  .catch(err => { console.warn("[vextjs-opentelemetry] Logs export FAILED:", err.message); cb({ code: ExportResultCode.FAILED, error: err }); });
+                  .then(() => {
+                    logsExportLogger.onSuccess();
+                    cb({ code: ExportResultCode.SUCCESS });
+                  })
+                  .catch(err => {
+                    logsExportLogger.onFailure(err);
+                    cb({ code: ExportResultCode.FAILED, error: err });
+                  });
               },
               shutdown() { return Promise.resolve(); },
             } as never),

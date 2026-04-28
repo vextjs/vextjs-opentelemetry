@@ -206,7 +206,7 @@ try {
 
   const exportDesc =
     exportMode === "none"
-      ? "no export (configure endpoint to enable)"
+      ? "deferred export (waiting for plugin setup or package.json vext.otel.endpoint)"
       : exportMode === "file"
         ? `exporting to ${exportDir}`
         : `exporting to ${config.endpoint} [${config.protocol}]`;

@@ -10,6 +10,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.0.4] - 2026-04-28
+
+### Changed
+
+- **gRPC h2c 导出成功日志默认降噪**（`src/core/sdk-config.ts`）
+  - 不再为每一批成功导出持续打印 `Trace/Metrics/Logs export OK (grpc h2c)`
+  - 保留初始化摘要日志，避免长时间运行的服务控制台被高频成功日志刷屏
+
+### Fixed
+
+- **gRPC h2c 导出状态日志改为“状态变化驱动”**（`src/core/sdk-config.ts`）
+  - 首次失败时输出 `warn`
+  - 持续失败期间不重复刷相同告警
+  - 失败后的首次恢复只输出一次 `recovered` 提示
+  - 使 `admin` 这类持续上报场景下的日志更聚焦于真正异常，而不是正常心跳
+
+---
+
 ## [1.0.3] - 2026-04-28
 
 ### Fixed
@@ -340,7 +358,8 @@ const result = await withSpan("user.query", (span) => {
 
 ---
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.3...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.0...v1.0.4
 [1.0.3]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.2...vextjs-opentelemetry@1.0.3
 [1.0.2]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.1...vextjs-opentelemetry@1.0.2
 [1.0.1]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.0...vextjs-opentelemetry@1.0.1
