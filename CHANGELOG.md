@@ -10,6 +10,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.0.5] - 2026-04-28
+
+### Fixed
+
+- **deferred export 启动摘要默认静默**（`src/instrumentation.ts`、`src/core/startup-log.ts`）
+  - 当 `instrumentation` 在 preload 阶段以 `exportMode === "none"` 启动、等待插件 setup 或消费应用 `package.json vext.otel.endpoint` 接管 exporter 时，不再默认打印 `SDK initialized → deferred export ...`
+  - 避免 VextJS 场景中把“启动期 deferred”误解成“最终未配置或未上报”
+  - 仍保留真正已配置导出目标时的启动摘要日志
+
+### Added
+
+- **启动摘要判定与文案辅助函数**（`src/core/startup-log.ts`）
+- **启动日志策略单测**（`test/startup-log.test.ts`）
+
+---
+
 ## [1.0.4] - 2026-04-28
 
 ### Changed
@@ -358,7 +374,8 @@ const result = await withSpan("user.query", (span) => {
 
 ---
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.0...v1.0.4
 [1.0.3]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.2...vextjs-opentelemetry@1.0.3
 [1.0.2]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.1...vextjs-opentelemetry@1.0.2

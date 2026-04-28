@@ -31,6 +31,7 @@ import {
   tryCreateGrpcExporters,
 } from "./core/exporter.js";
 import { getDeferredState } from "./core/deferred.js";
+import { shouldLogStartupSummary, formatStartupExportDesc } from "./core/startup-log.js";
 
 let sdkStarted = false;
 
@@ -204,18 +205,20 @@ try {
     process.env.VEXT_OTEL_AUTO_INSTRUMENTATION = "1";
   }
 
-  const exportDesc =
-    exportMode === "none"
-      ? "deferred export (waiting for plugin setup or package.json vext.otel.endpoint)"
-      : exportMode === "file"
-        ? `exporting to ${exportDir}`
-        : `exporting to ${config.endpoint} [${config.protocol}]`;
+  if (shouldLogStartupSummary(exportMode)) {
+    const exportDesc = formatStartupExportDesc(
+      exportMode,
+      exportDir,
+      config.endpoint,
+      config.protocol,
+    );
 
-  console.log(
-    `[vextjs-opentelemetry] SDK initialized` +
-      (getNodeAutoInstrumentations ? " (with auto-instrumentation)" : "") +
-      ` → ${exportDesc}`,
-  );
+    console.log(
+      `[vextjs-opentelemetry] SDK initialized` +
+        (getNodeAutoInstrumentations ? " (with auto-instrumentation)" : "") +
+        ` → ${exportDesc}`,
+    );
+  }
 
   // ── 优雅关闭 ─────────────────────────────────────────────
   const shutdownHandler = () => {
