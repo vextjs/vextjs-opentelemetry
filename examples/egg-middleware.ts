@@ -20,9 +20,9 @@
 // ─────────────────────────────────────────────────────────────
 
 // 注意：本示例使用相对跨包路径，发布后改为：
-// import { createKoaMiddleware } from "vextjs-opentelemetry/koa";
-import { createKoaMiddleware } from "../src/adapters/koa.js";
-import type { OtelHttpContext } from "../src/types.js";
+// import { createEggMiddleware } from "vextjs-opentelemetry/egg";
+import { createEggMiddleware } from "../src/adapters/egg.js";
+import type { OtelHttpContext } from "../src/core/types.js";
 
 // ── 步骤 1：创建 Egg.js 中间件文件（app/middleware/otel.ts）──
 
@@ -33,37 +33,30 @@ import type { OtelHttpContext } from "../src/types.js";
  *   config.middleware = ["otel"];
  *   config.otel = { serviceName: "my-egg-app" };
  */
-export default function otelMiddleware(
-  options: { serviceName?: string },
-  _app: unknown, // egg.Application — 不加入 devDeps，用 unknown 防止类型错误
-) {
-  return createKoaMiddleware({
-    serviceName: options.serviceName ?? "my-egg-app",
-    tracing: {
-      // 忽略健康检查路径，不产生追踪数据
-      ignorePaths: ["/health", "/ping", "/favicon.ico"],
+export default createEggMiddleware({
+  serviceName: "my-egg-app",
+  tracing: {
+    // 忽略健康检查路径，不产生追踪数据
+    ignorePaths: ["/health", "/ping", "/favicon.ico"],
 
-      // 自定义 Span 名称（路由匹配完成后可获取 ctx.route）
-      spanNameResolver: (ctx: OtelHttpContext) =>
-        `${ctx.method} ${ctx.route ?? ctx.path}`,
+    // 自定义 Span 名称（路由匹配完成后可获取 ctx.route）
+    spanNameResolver: (ctx: OtelHttpContext) =>
+      `${ctx.method} ${ctx.route ?? ctx.path}`,
 
-      // 为每个 Span 附加业务维度属性
-      extraAttributes: (ctx: OtelHttpContext) => ({
-        "tenant.id": (ctx.headers["x-tenant-id"] as string) ?? "",
-        "api.version":
-          (ctx.headers["x-api-version"] as string) ?? "v1",
-      }),
-    },
-    metrics: {
-      // 自定义指标维度标签
-      customLabels: (ctx: OtelHttpContext) => ({
-        "app.env": process.env.NODE_ENV ?? "unknown",
-        "api.version":
-          (ctx.headers["x-api-version"] as string) ?? "v1",
-      }),
-    },
-  });
-}
+    // 为每个 Span 附加业务维度属性
+    extraAttributes: (ctx: OtelHttpContext) => ({
+      "tenant.id": (ctx.headers["x-tenant-id"] as string) ?? "",
+      "api.version": (ctx.headers["x-api-version"] as string) ?? "v1",
+    }),
+  },
+  metrics: {
+    // 自定义指标维度标签
+    customLabels: (ctx: OtelHttpContext) => ({
+      "app.env": process.env.NODE_ENV ?? "unknown",
+      "api.version": (ctx.headers["x-api-version"] as string) ?? "v1",
+    }),
+  },
+});
 
 // ── 步骤 2：注册中间件（config/config.default.ts）──────────
 

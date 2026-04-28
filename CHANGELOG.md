@@ -10,6 +10,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.0.3] - 2026-04-28
+
+### Fixed
+
+- **VextJS 预加载阶段的 `service.name` 不再无条件回落为 `vext-app`**（`src/core/config.ts`）
+  - `instrumentation.ts` 新增从消费应用工作目录读取 `package.json` 的 `vext.otel` 配置
+  - 当未显式设置 `OTEL_SERVICE_NAME` / `vext.otel.serviceName` 时，会优先回退到消费应用的 `package.json.name`（例如 `admin`）
+  - 仅在当前工作目录就是插件仓库自身时，才继续使用默认值 `vext-app`
+
+- **Egg 示例修复失效类型导入**（`examples/egg-middleware.ts`）
+  - 移除对已不存在的 `../src/types.js` 的引用
+  - 示例改为直接使用 `createEggMiddleware()`，避免继续误导用户走旧路径
+
+- **放宽 `vextjs` peer 版本约束**（`package.json`）
+  - `peerDependencies.vextjs` 从固定区间调整为 `>=0.2.5`
+  - 解决 `admin` 在升级 `vextjs-nacos@latest` 时，被 `vextjs-opentelemetry` 旧 peer 声明卡住的安装冲突
+
+---
+
 ## [1.0.2] - 2026-04-08
 
 ### Fixed
@@ -127,19 +146,19 @@ process.env.VEXT_OTEL_SDK_STARTED = '1';
 
 ```typescript
 // 无需改动
-import { createKoaMiddleware } from 'vextjs-opentelemetry/koa';
+import { createKoaMiddleware } from "vextjs-opentelemetry/koa";
 // 或使用专属适配器
-import { defineEggMiddleware } from 'vextjs-opentelemetry/egg';
-export default defineEggMiddleware({ serviceName: 'chat' });
+import { defineEggMiddleware } from "vextjs-opentelemetry/egg";
+export default defineEggMiddleware({ serviceName: "chat" });
 ```
 
 **通用 Span 追踪**
 
 ```typescript
 // 主入口直接使用（所有框架）
-import { withSpan, getActiveTraceId } from 'vextjs-opentelemetry';
-const result = await withSpan('user.query', (span) => {
-  span.setAttribute('user.id', id);
+import { withSpan, getActiveTraceId } from "vextjs-opentelemetry";
+const result = await withSpan("user.query", (span) => {
+  span.setAttribute("user.id", id);
   return db.findUser(id);
 });
 ```
@@ -321,7 +340,9 @@ const result = await withSpan('user.query', (span) => {
 
 ---
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.1...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.3...HEAD
+[1.0.3]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.2...vextjs-opentelemetry@1.0.3
+[1.0.2]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.1...vextjs-opentelemetry@1.0.2
 [1.0.1]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@1.0.0...vextjs-opentelemetry@1.0.1
 [1.0.0]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.5...vextjs-opentelemetry@1.0.0
 [0.1.3]: https://github.com/vextjs/vextjs-plugins/compare/vextjs-opentelemetry@0.1.2...vextjs-opentelemetry@0.1.3

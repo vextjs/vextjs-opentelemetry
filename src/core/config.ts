@@ -2,11 +2,32 @@
 // SDK 配置读取器
 //
 // 配置来源优先级（高→低）：
-//   1. OTel 标准环境变量（OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT 等）
-//   2. 内置默认值
+//   1. 消费应用 package.json 的 vext.otel.*
+//   2. OTel 标准环境变量（OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT 等）
+//   3. 消费应用 package.json.name（serviceName 回退）
+//   4. 内置默认值
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import type { OtelConfig } from "./types.js";
 import { DEFAULT_SERVICE_NAME } from "./types.js";
+
+interface PackageJsonOtelConfig {
+  serviceName?: string;
+  endpoint?: string;
+  protocol?: string;
+  headers?: Record<string, string>;
+  sampling?: { ratio?: number };
+  metricIntervalMs?: number;
+}
+
+interface AppPackageJson {
+  name?: string;
+  vext?: {
+    otel?: PackageJsonOtelConfig;
+  };
+}
 
 // ── 协议解析 ──────────────────────────────────────────────────
 
@@ -19,6 +40,12 @@ function resolveProtocolFromEnv(): "http" | "grpc" | undefined {
   if (!proto) return undefined;
   if (proto === "grpc") return "grpc";
   if (proto.startsWith("http")) return "http";
+  return undefined;
+}
+
+function resolveProtocol(value: unknown): "http" | "grpc" | undefined {
+  if (value === "grpc") return "grpc";
+  if (typeof value === "string" && value.startsWith("http")) return "http";
   return undefined;
 }
 
@@ -46,29 +73,91 @@ function parseHeadersFromEnv(): Record<string, string> | undefined {
   }
 }
 
+function readAppPackageJson(): AppPackageJson | undefined {
+  try {
+    const raw = readFileSync(join(process.cwd(), "package.json"), "utf8");
+    return JSON.parse(raw) as AppPackageJson;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolvePackageOtelConfig() {
+  const packageJson = readAppPackageJson();
+  const packageOtel = packageJson?.vext?.otel;
+  const packageName =
+    packageJson?.name && packageJson.name !== "vextjs-opentelemetry"
+      ? packageJson.name
+      : undefined;
+
+  const headers = packageOtel?.headers;
+  const normalizedHeaders =
+    headers && typeof headers === "object"
+      ? Object.fromEntries(
+          Object.entries(headers).filter(
+            ([key, value]) =>
+              typeof key === "string" && typeof value === "string",
+          ),
+        )
+      : undefined;
+
+  return {
+    packageName,
+    serviceName: packageOtel?.serviceName,
+    endpoint: packageOtel?.endpoint,
+    protocol: resolveProtocol(packageOtel?.protocol),
+    headers:
+      normalizedHeaders && Object.keys(normalizedHeaders).length > 0
+        ? normalizedHeaders
+        : undefined,
+    samplingRatio:
+      typeof packageOtel?.sampling?.ratio === "number" &&
+      packageOtel.sampling.ratio >= 0 &&
+      packageOtel.sampling.ratio <= 1
+        ? packageOtel.sampling.ratio
+        : undefined,
+    metricIntervalMs:
+      typeof packageOtel?.metricIntervalMs === "number" &&
+      packageOtel.metricIntervalMs > 0
+        ? packageOtel.metricIntervalMs
+        : undefined,
+  };
+}
+
 // ── 主函数 ────────────────────────────────────────────────────
 
 /**
  * 解析完整 OTel SDK 配置
  *
- * 优先级：OTel 标准环境变量 > 内置默认值
+ * 优先级：package.json vext.otel.* > OTel 标准环境变量 > package.json.name > 内置默认值
  */
 export function resolveOtelConfig(): OtelConfig {
-  const serviceName = process.env.OTEL_SERVICE_NAME ?? DEFAULT_SERVICE_NAME;
+  const packageConfig = resolvePackageOtelConfig();
+  const serviceName =
+    packageConfig.serviceName ??
+    process.env.OTEL_SERVICE_NAME ??
+    packageConfig.packageName ??
+    DEFAULT_SERVICE_NAME;
 
-  const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "none";
+  const endpoint =
+    packageConfig.endpoint ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "none";
 
-  const protocol: "http" | "grpc" = resolveProtocolFromEnv() ?? "http";
+  const protocol: "http" | "grpc" =
+    packageConfig.protocol ?? resolveProtocolFromEnv() ?? "http";
 
-  const headers = parseHeadersFromEnv();
+  const headers = packageConfig.headers ?? parseHeadersFromEnv();
 
   const samplingRatio = (() => {
+    if (packageConfig.samplingRatio !== undefined)
+      return packageConfig.samplingRatio;
     const envRatio = parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG ?? "");
     if (!isNaN(envRatio) && envRatio >= 0 && envRatio <= 1) return envRatio;
     return 1.0;
   })();
 
   const metricIntervalMs = (() => {
+    if (packageConfig.metricIntervalMs !== undefined)
+      return packageConfig.metricIntervalMs;
     const env = parseInt(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? "", 10);
     if (!isNaN(env) && env > 0) return env;
     return 15000;

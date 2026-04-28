@@ -12,8 +12,10 @@
 //   ENV NODE_OPTIONS="--import vextjs-opentelemetry/instrumentation"
 //
 // 配置来源（优先级从高到低）：
-//   1. OTel 标准环境变量（OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT 等）
-//   2. 内置默认值（serviceName: "vext-app", protocol: "http", endpoint: "none"）
+//   1. 消费应用 package.json 的 vext.otel.*
+//   2. OTel 标准环境变量（OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT 等）
+//   3. 消费应用 package.json.name（serviceName 回退）
+//   4. 内置默认值（serviceName: "vext-app", protocol: "http", endpoint: "none"）
 
 import type {
   Instrumentation,
