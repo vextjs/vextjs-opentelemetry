@@ -540,13 +540,13 @@ describe("createTracingMiddleware", () => {
     });
   });
 
-  // ── 场景7: extraAttributes ────────────────────────────────────────────────
+  // ── 场景7: startAttributes ────────────────────────────────────────────────
 
-  describe("tracing.extraAttributes", () => {
+  describe("tracing.startAttributes", () => {
     it("对象形式的额外属性被合并到 Span", async () => {
       const middleware = createTracingMiddleware(createMockMetrics(), {
         tracing: {
-          extraAttributes: {
+          startAttributes: {
             "custom.key": "custom-value",
             "custom.number": 42,
           },
@@ -568,14 +568,14 @@ describe("createTracingMiddleware", () => {
     it("函数形式的额外属性接收 req 并将返回值合并到 Span", async () => {
       const attrFn = vi.fn(() => ({ "user.id": "u-123" }));
       const middleware = createTracingMiddleware(createMockMetrics(), {
-        tracing: { extraAttributes: attrFn },
+        tracing: { startAttributes: attrFn },
       });
       const req = createMockReq();
       const res = createMockRes();
 
       await (middleware as Function)(req, res, async () => {});
 
-      expect(attrFn).toHaveBeenCalledWith(req);
+      expect(attrFn).toHaveBeenCalledWith(expect.objectContaining({ phase: "start", path: "/test" }), req);
       expect(mockSpan.setAttributes).toHaveBeenCalledWith(
         expect.objectContaining({ "user.id": "u-123" }),
       );
@@ -583,7 +583,7 @@ describe("createTracingMiddleware", () => {
 
     it("函数形式返回空对象时正常运行", async () => {
       const middleware = createTracingMiddleware(createMockMetrics(), {
-        tracing: { extraAttributes: () => ({}) },
+        tracing: { startAttributes: () => ({}) },
       });
       const req = createMockReq();
       const res = createMockRes();
@@ -633,14 +633,14 @@ describe("createTracingMiddleware", () => {
     });
   });
 
-  // ── 场景9: metrics.customLabels ──────────────────────────────────────────
+  // ── 场景9: metrics.labels ────────────────────────────────────────────────
 
-  describe("metrics.customLabels", () => {
+  describe("metrics.labels", () => {
     it("静态对象形式：label 合并到 httpRequestTotal 和 httpRequestDuration", async () => {
       const metrics = createMockMetrics();
       const middleware = createTracingMiddleware(metrics, {
         metrics: {
-          customLabels: {
+          labels: {
             "tenant.id": "us-east",
             env: "prod",
           },
@@ -671,11 +671,11 @@ describe("createTracingMiddleware", () => {
 
     it("函数形式：从 req.headers 读取，返回值正确合并", async () => {
       const metrics = createMockMetrics();
-      const labelsFn = vi.fn((req: { headers: Record<string, string> }) => ({
-        "api.version": req.headers["x-api-version"] ?? "v1",
+      const labelsFn = vi.fn((ctx: { phase: string }, req: { headers: Record<string, string> }) => ({
+        "api.version": `${ctx.phase}-${req.headers["x-api-version"] ?? "v1"}`,
       }));
       const middleware = createTracingMiddleware(metrics, {
-        metrics: { customLabels: labelsFn as never },
+        metrics: { labels: labelsFn as never },
       });
       const req = createMockReq({
         headers: { "x-api-version": "v2" },
@@ -684,10 +684,10 @@ describe("createTracingMiddleware", () => {
 
       await (middleware as Function)(req, res, async () => {});
 
-      expect(labelsFn).toHaveBeenCalledWith(req);
+      expect(labelsFn).toHaveBeenCalledWith(expect.objectContaining({ phase: "end", statusCode: 200 }), req);
       expect(mockCounter.add).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ "api.version": "v2" }),
+        expect.objectContaining({ "api.version": "end-v2" }),
       );
     });
 
@@ -696,7 +696,7 @@ describe("createTracingMiddleware", () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const middleware = createTracingMiddleware(metrics, {
         metrics: {
-          customLabels: () => {
+          labels: () => {
             throw new Error("labels error");
           },
         },
@@ -717,18 +717,18 @@ describe("createTracingMiddleware", () => {
       );
       // warn 被调用
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("customLabels"),
+        expect.stringContaining("metrics.labels"),
       );
       warnSpy.mockRestore();
     });
 
-    it("metrics.enabled: false 时 customLabels 函数不被调用", async () => {
+    it("metrics.enabled: false 时 labels 函数不被调用", async () => {
       const metrics = createMockMetrics();
       const labelsFn = vi.fn(() => ({ "test.key": "value" }));
       const middleware = createTracingMiddleware(metrics, {
         metrics: {
           enabled: false,
-          customLabels: labelsFn as never,
+          labels: labelsFn as never,
         },
       });
       const req = createMockReq();
@@ -740,11 +740,11 @@ describe("createTracingMiddleware", () => {
       expect(mockCounter.add).not.toHaveBeenCalled();
     });
 
-    it("httpActiveRequests 不含 customLabels（仅 http.method，符合 OTEL 语义约定）", async () => {
+    it("httpActiveRequests 不含 labels（仅 http.method，符合 OTEL 语义约定）", async () => {
       const metrics = createMockMetrics();
       const middleware = createTracingMiddleware(metrics, {
         metrics: {
-          customLabels: { "tenant.id": "test" },
+          labels: { "tenant.id": "test" },
         },
       });
       const req = createMockReq({ method: "PUT" });
@@ -845,8 +845,8 @@ describe("createTracingMiddleware", () => {
 
   describe("tracing.spanNameResolver", () => {
     it("提供 resolver 时调用 activeSpan.updateName()", async () => {
-      const resolver = vi.fn((req: { method: string; path: string }) =>
-        `${req.method} ${req.path}`,
+      const resolver = vi.fn((ctx: { method: string; path: string }) =>
+        `${ctx.method} ${ctx.path}`,
       );
       const middleware = createTracingMiddleware(createMockMetrics(), {
         tracing: { spanNameResolver: resolver as never },
@@ -856,7 +856,10 @@ describe("createTracingMiddleware", () => {
 
       await (middleware as Function)(req, res, async () => {});
 
-      expect(resolver).toHaveBeenCalledWith(req);
+      expect(resolver).toHaveBeenCalledWith(
+        expect.objectContaining({ phase: "end", method: "GET", path: "/users/123", statusCode: 200 }),
+        req,
+      );
       expect(mockSpan.updateName).toHaveBeenCalledWith("GET /users/123");
     });
 

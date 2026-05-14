@@ -24,7 +24,7 @@ import type {
 export const DEFAULT_SERVICE_NAME = "vext-app";
 
 /**
- * 框架无关的 HTTP 请求上下文
+ * 框架无关的 HTTP 观测上下文
  *
  * 各框架适配器将自己的请求对象映射到此结构，
  * 再传入 buildCoreHandlers 的三阶段钩子。
@@ -32,7 +32,9 @@ export const DEFAULT_SERVICE_NAME = "vext-app";
  * 注意：在全局中间件阶段（如 Express app.use()），
  * route 可能为 undefined（路由匹配尚未发生）。
  */
-export interface OtelHttpContext {
+export interface HttpObservationContext {
+  /** 当前所处阶段：start（请求开始）/ end（请求结束或异常收口） */
+  phase: "start" | "end";
   /** HTTP 方法（大写），如 "GET"、"POST" */
   method: string;
   /** 请求路径（不含 query string），如 "/users/123" */
@@ -41,19 +43,41 @@ export interface OtelHttpContext {
   route: string | undefined;
   /** 请求 ID，通常来自 x-request-id 请求头 */
   requestId: string | undefined;
-  /** 原始请求头（用于 extraAttributes 等回调动态读取） */
+  /** 原始请求头（用于 startAttributes / endAttributes / metrics.labels / lifecycle 动态读取） */
   headers: Record<string, string | string[] | undefined>;
   /** 请求体大小（bytes），来自 Content-Length 请求头；未提供时为 undefined */
   requestSize?: number;
   /** 响应体大小（bytes），来自 Content-Length 响应头；由适配器在 onRequestEnd 前写入 */
   responseSize?: number;
+  /** HTTP 响应状态码；start 阶段通常为 undefined */
+  statusCode?: number;
+  /** 请求耗时（毫秒）；start 阶段通常为 undefined */
+  latencyMs?: number;
 }
 
-export type HttpAttributeMap = Record<string, string | number | boolean>;
+export type ObservationAttributeMap = Record<string, string | number | boolean>;
 
-export type HttpAttributeResolver<TRaw = unknown> =
-  | HttpAttributeMap
-  | ((ctx: OtelHttpContext, raw: TRaw | undefined) => HttpAttributeMap);
+export type ObservationAttributeResolver<TRaw = unknown> =
+  | ObservationAttributeMap
+  | ((ctx: HttpObservationContext, raw: TRaw) => ObservationAttributeMap);
+
+export interface RequestLifecycleInfo {
+  /** 十六进制 Trace ID（32 位小写），无活跃 Span 时为空字符串 */
+  traceId: string;
+  /** HTTP 响应状态码；异常路径固定为 500 */
+  statusCode: number;
+  /** 请求耗时（毫秒整数，performance.now() 精度） */
+  latencyMs: number;
+  /** 异常对象；成功路径为 undefined */
+  error?: unknown;
+}
+
+export interface RequestLifecycleHooks<TRaw = unknown> {
+  /** 请求开始阶段生命周期回调（非 attributes 副作用入口） */
+  onStart?: (ctx: HttpObservationContext, raw: TRaw) => void;
+  /** 请求结束阶段生命周期回调（非 attributes 副作用入口） */
+  onEnd?: (ctx: HttpObservationContext, raw: TRaw, info: RequestLifecycleInfo) => void;
+}
 
 // ── HTTP 追踪选项 ─────────────────────────────────────────────
 
@@ -63,7 +87,7 @@ export type HttpAttributeResolver<TRaw = unknown> =
  * 用于 createExpressMiddleware / createKoaMiddleware /
  * createHonoMiddleware / createFastifyPlugin 等工厂函数。
  */
-export interface HttpOtelOptions {
+export interface HttpOtelOptions<TRaw = unknown> {
   /** 服务名称，写入 vext.service Span 属性，默认 "http-app" */
   serviceName?: string;
 
@@ -74,19 +98,17 @@ export interface HttpOtelOptions {
     /** 忽略路径列表（字符串精确匹配或正则）*/
     ignorePaths?: (string | RegExp)[];
     /** 自定义 Span 名称解析器（请求结束后调用，route 已知） */
-    spanNameResolver?: (ctx: OtelHttpContext) => string;
+    spanNameResolver?: (ctx: HttpObservationContext, raw: TRaw) => string;
     /**
-     * 请求开始阶段额外 Span 属性（route 可能为 undefined）
+     * 请求开始阶段额外 Span 属性（route/statusCode 可能为 undefined）
      * ⚠️ 避免高基数字段
      */
-    extraAttributes?:
-      | HttpAttributeMap
-      | ((ctx: OtelHttpContext) => HttpAttributeMap);
+    startAttributes?: ObservationAttributeResolver<TRaw>;
     /**
      * 请求结束阶段额外 Span 属性（route / statusCode 已知，适合读取框架原始上下文）
      * ⚠️ 避免高基数字段
      */
-    lateAttributes?: HttpAttributeResolver;
+    endAttributes?: ObservationAttributeResolver<TRaw>;
   };
 
   /** 指标配置 */
@@ -102,16 +124,11 @@ export interface HttpOtelOptions {
      * 自定义业务标签，合并到 duration + total 指标
      * ⚠️ 避免高基数字段（如 user.id）
      */
-    customLabels?:
-      | Record<string, string | number | boolean>
-      | ((ctx: OtelHttpContext) => Record<string, string | number | boolean>);
+    labels?: ObservationAttributeResolver<TRaw>;
   };
 
-  /**
-   * 请求完成回调（成功或异常均触发）
-   * 在 Span/指标操作完成后调用，try/catch 保护主链路
-   */
-  onEnd?: (info: OnEndInfo) => void;
+  /** 请求生命周期回调（成功或异常均触发） */
+  lifecycle?: RequestLifecycleHooks<TRaw>;
 
   /** Logs 配置 */
   logs?: {
@@ -125,28 +142,6 @@ export interface HttpOtelOptions {
   };
 }
 
-// ── 请求完成回调信息 ──────────────────────────────────────────
-
-/**
- * onEnd 回调接收的请求完成信息
- *
- * 在每次 HTTP 请求处理完成后由各适配器触发。
- * 可用于将 traceId 注入业务上下文（如日志关联）。
- */
-export interface OnEndInfo {
-  /** 十六进制 Trace ID（32 位小写），无活跃 Span 时为空字符串 */
-  traceId: string;
-  /** HTTP 方法（大写），如 "GET" */
-  method: string;
-  /** 解析后的路由模板（如 "/users/:id"），无法解析时为原始 path */
-  route: string;
-  /** 请求耗时（毫秒整数，performance.now() 精度） */
-  latencyMs: number;
-  /** HTTP 响应状态码；异常路径固定为 500 */
-  statusCode: number;
-  /** 原始框架请求/上下文对象，供高级场景按需读取 */
-  raw?: unknown;
-}
 
 // ── SDK 配置 ──────────────────────────────────────────────────
 

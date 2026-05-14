@@ -18,9 +18,9 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 
 import { withSpan } from "../core/span.js";
 import { buildCoreHandlers } from "../core/http-core.js";
-import type { HttpOtelOptions, OtelHttpContext } from "../core/types.js";
+import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 
-export type { OtelHttpContext, HttpOtelOptions };
+export type { HttpObservationContext, HttpOtelOptions };
 
 // ── Express Request 类型扩展 ───────────────────────────────────
 declare module "express-serve-static-core" {
@@ -52,7 +52,7 @@ declare module "express-serve-static-core" {
  * import { createExpressMiddleware } from "vextjs-opentelemetry/express";
  * app.use(createExpressMiddleware({ serviceName: "my-express-app" }));
  */
-export function createExpressMiddleware(options: HttpOtelOptions = {}): RequestHandler {
+export function createExpressMiddleware(options: HttpOtelOptions<{ req: Request; res: Response }> = {}): RequestHandler {
   const handlers = buildCoreHandlers(options);
 
   return function otelExpressMiddleware(
@@ -66,29 +66,37 @@ export function createExpressMiddleware(options: HttpOtelOptions = {}): RequestH
     }
 
     const requestId = req.headers["x-request-id"];
-    const ctx: OtelHttpContext = {
+    const ctx: HttpObservationContext = {
+      phase: "start",
       method: req.method,
       path: req.path,
       route: undefined, // 全局中间件阶段，route 尚未匹配
       requestId: Array.isArray(requestId) ? requestId[0] : requestId,
       headers: req.headers as Record<string, string | string[] | undefined>,
+      requestSize: req.headers["content-length"] ? parseInt(String(req.headers["content-length"]), 10) : undefined,
     };
 
-    const state = handlers.onRequestStart(ctx);
+    const state = handlers.onRequestStart(ctx, { req, res });
 
     res.on("finish", () => {
       // finish 时路由已完成匹配，req.route?.path 可获取路由模板
-      const finalCtx: OtelHttpContext = {
+      const responseSize = res.getHeader?.("content-length");
+      const finalCtx: HttpObservationContext = {
         ...ctx,
+        phase: "end",
         route: req.route?.path ?? req.path,
+        responseSize: responseSize ? parseInt(String(responseSize), 10) : undefined,
       };
       handlers.onRequestEnd(state, finalCtx, res.statusCode, { req, res });
     });
 
     res.on("error", (err: unknown) => {
-      const finalCtx: OtelHttpContext = {
+      const responseSize = res.getHeader?.("content-length");
+      const finalCtx: HttpObservationContext = {
         ...ctx,
+        phase: "end",
         route: req.route?.path ?? req.path,
+        responseSize: responseSize ? parseInt(String(responseSize), 10) : undefined,
       };
       handlers.onRequestError(state, finalCtx, err, { req, res });
     });

@@ -19,9 +19,9 @@ import { createRequire } from "node:module";
 
 import { withSpan } from "../core/span.js";
 import { buildCoreHandlers } from "../core/http-core.js";
-import type { HttpOtelOptions, OtelHttpContext } from "../core/types.js";
+import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 
-export type { OtelHttpContext, HttpOtelOptions };
+export type { HttpObservationContext, HttpOtelOptions };
 
 // ── Koa Context 类型扩展 ───────────────────────────────────────
 declare module "koa" {
@@ -49,7 +49,7 @@ declare module "koa" {
  * @param options 追踪选项（全部可选）
  * @returns Koa Middleware
  */
-export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
+export function createKoaMiddleware(options: HttpOtelOptions<Context> = {}): Middleware {
     const handlers = buildCoreHandlers(options);
     const serviceName = options.serviceName ?? "http-app";
     const tracingEnabled = options.tracing?.enabled !== false;
@@ -69,7 +69,8 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
         }
 
         const requestId = ctx.get("x-request-id") || undefined;
-        const otelCtx: OtelHttpContext = {
+        const observationCtx: HttpObservationContext = {
+            phase: "start",
             method: ctx.method,
             path: ctx.path,
             route: undefined, // 路由匹配在 await next() 之后完成
@@ -81,18 +82,20 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
         // ── 已有 active span（HTTP auto-instrumentation 已创建），或追踪关闭 ──
         // 直接使用原有行为：读取 + 标注已有 span，不重复创建。
         if (trace.getActiveSpan() || !tracingEnabled || isIgnoredPath(ctx.path)) {
-            const state = handlers.onRequestStart(otelCtx);
+            const state = handlers.onRequestStart(observationCtx, ctx);
             try {
                 await next();
-                const finalCtx: OtelHttpContext = {
-                    ...otelCtx,
+                const finalCtx: HttpObservationContext = {
+                    ...observationCtx,
+                    phase: "end",
                     route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
                     responseSize: ctx.length,
                 };
                 handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200, ctx);
             } catch (err) {
-                const finalCtx: OtelHttpContext = {
-                    ...otelCtx,
+                const finalCtx: HttpObservationContext = {
+                    ...observationCtx,
+                    phase: "end",
                     route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
                     responseSize: ctx.length,
                 };
@@ -107,31 +110,32 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
         // 未注册 @opentelemetry/instrumentation-http。
         const tracer = trace.getTracer(serviceName);
         const initialName = spanResolver
-            ? spanResolver(otelCtx)
+            ? spanResolver(observationCtx, ctx)
             : `${ctx.method} ${ctx.path}`;
 
         return tracer.startActiveSpan(
             initialName,
             { kind: SpanKind.SERVER },
             async (span) => {
-                const state = handlers.onRequestStart(otelCtx);
+                const state = handlers.onRequestStart(observationCtx, ctx);
                 try {
                     await next();
 
                     const routerPath =
                         (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path;
-                    const finalCtx: OtelHttpContext = { ...otelCtx, route: routerPath, responseSize: ctx.length };
+                    const finalCtx: HttpObservationContext = { ...observationCtx, phase: "end", route: routerPath, responseSize: ctx.length };
                     // 路由匹配完成后，用正确的路由模板更新 span 名
                     const finalName = spanResolver
-                        ? spanResolver(finalCtx)
+                        ? spanResolver(finalCtx, ctx)
                         : `${ctx.method} ${routerPath}`;
                     if (finalName !== initialName) {
                         span.updateName(finalName);
                     }
                     handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200, ctx);
                 } catch (err) {
-                    const finalCtx: OtelHttpContext = {
-                        ...otelCtx,
+                    const finalCtx: HttpObservationContext = {
+                        ...observationCtx,
+                        phase: "end",
                         route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
                         responseSize: ctx.length,
                     };

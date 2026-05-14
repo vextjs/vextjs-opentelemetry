@@ -12,11 +12,11 @@
 import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
 import type { Span } from "@opentelemetry/api";
 import type {
-  OtelHttpContext,
+  HttpObservationContext,
   HttpOtelOptions,
-  OnEndInfo,
-  HttpAttributeMap,
-  HttpAttributeResolver,
+  ObservationAttributeMap,
+  ObservationAttributeResolver,
+  RequestLifecycleInfo,
 } from "./types.js";
 
 // ── 内置默认分桶（毫秒）──────────────────────────────────────
@@ -58,10 +58,10 @@ export interface CoreHandlers {
    * 请求开始阶段
    * - 获取当前活跃 Span 并存入 state
    * - 检查 ignorePaths；shouldTrace=false 时后续 Span 操作跳过
-   * - 调用 extraAttributes（route 可能为 undefined）
+   * - 调用 startAttributes（route 可能为 undefined）
    * - 活跃请求数 +1
    */
-  onRequestStart(ctx: OtelHttpContext): CoreRequestState;
+  onRequestStart(ctx: HttpObservationContext, raw: unknown): CoreRequestState;
 
   /**
    * 请求成功结束阶段（await next() 或 res.on('finish') 之后）
@@ -71,7 +71,7 @@ export interface CoreHandlers {
    * - 记录 httpRequestDuration / httpRequestTotal
    * - 活跃请求数 -1
    */
-  onRequestEnd(state: CoreRequestState, ctx: OtelHttpContext, statusCode: number, raw?: unknown): void;
+  onRequestEnd(state: CoreRequestState, ctx: HttpObservationContext, statusCode: number, raw: unknown): void;
 
   /**
    * 请求异常阶段（未捕获异常）
@@ -79,7 +79,7 @@ export interface CoreHandlers {
    * - 以 statusCode=500 记录指标
    * - 活跃请求数 -1
    */
-  onRequestError(state: CoreRequestState, ctx: OtelHttpContext, err: unknown, raw?: unknown): void;
+  onRequestError(state: CoreRequestState, ctx: HttpObservationContext, err: unknown, raw: unknown): void;
 }
 
 // ── 工厂函数 ─────────────────────────────────────────────────
@@ -92,18 +92,19 @@ export interface CoreHandlers {
  * @param options 通用追踪选项（HttpOtelOptions）
  * @param meterName 可选 meter 名称，默认 "vextjs-opentelemetry-http"
  */
-export function buildCoreHandlers(
-  options: HttpOtelOptions,
+export function buildCoreHandlers<TRaw = unknown>(
+  options: HttpOtelOptions<TRaw>,
   meterName = "vextjs-opentelemetry-http",
 ): CoreHandlers {
   const metricsEnabled = options.metrics?.enabled !== false;
   const tracingEnabled = options.tracing?.enabled !== false;
   const serviceName = options.serviceName ?? "http-app";
   const ignorePaths = options.tracing?.ignorePaths ?? [];
-  const customLabelsFn = options.metrics?.customLabels;
-  const extraAttributesFn = options.tracing?.extraAttributes;
-  const lateAttributesFn = options.tracing?.lateAttributes;
+  const labelsFn = options.metrics?.labels;
+  const startAttributesFn = options.tracing?.startAttributes;
+  const endAttributesFn = options.tracing?.endAttributes;
   const spanNameResolver = options.tracing?.spanNameResolver;
+  const lifecycle = options.lifecycle;
 
   // 指标创建（SDK 未初始化时为 Noop，isRecording=false，全部静默）
   const meter = otelMetrics.getMeter(meterName);
@@ -136,21 +137,21 @@ export function buildCoreHandlers(
     );
   }
 
-  function resolveCustomLabels(ctx: OtelHttpContext): Record<string, string | number | boolean> {
-    if (!customLabelsFn) return {};
+  function resolveLabels(ctx: HttpObservationContext, raw: TRaw): Record<string, string | number | boolean> {
+    if (!labelsFn) return {};
     try {
-      return typeof customLabelsFn === "function" ? customLabelsFn(ctx) : customLabelsFn;
+      return typeof labelsFn === "function" ? labelsFn(ctx, raw) : labelsFn;
     } catch {
-      console.warn("[vextjs-opentelemetry] customLabels function threw an error, using defaults");
+      console.warn("[vextjs-opentelemetry] metrics.labels resolver threw an error, using defaults");
       return {};
     }
   }
 
   function resolveAttributes(
-    resolver: HttpAttributeResolver | ((ctx: OtelHttpContext) => HttpAttributeMap) | undefined,
-    ctx: OtelHttpContext,
-    raw?: unknown,
-  ): HttpAttributeMap {
+    resolver: ObservationAttributeResolver<TRaw> | undefined,
+    ctx: HttpObservationContext,
+    raw: TRaw,
+  ): ObservationAttributeMap {
     if (!resolver) return {};
     try {
       return typeof resolver === "function" ? resolver(ctx, raw) : resolver;
@@ -160,25 +161,60 @@ export function buildCoreHandlers(
     }
   }
 
+  function invokeLifecycleStart(ctx: HttpObservationContext, raw: TRaw): void {
+    if (!lifecycle?.onStart) return;
+    try {
+      lifecycle.onStart(ctx, raw);
+    } catch (e) {
+      console.warn("[vextjs-opentelemetry] lifecycle.onStart threw:", (e as Error).message ?? e);
+    }
+  }
+
+  function invokeLifecycleEnd(ctx: HttpObservationContext, raw: TRaw, info: RequestLifecycleInfo): void {
+    if (!lifecycle?.onEnd) return;
+    try {
+      lifecycle.onEnd(ctx, raw, info);
+    } catch (e) {
+      console.warn("[vextjs-opentelemetry] lifecycle.onEnd threw:", (e as Error).message ?? e);
+    }
+  }
+
+  function getTraceId(activeSpan: Span | undefined): string {
+    try {
+      return activeSpan?.spanContext?.().traceId ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   return {
-    onRequestStart(ctx: OtelHttpContext): CoreRequestState {
+    onRequestStart(ctx: HttpObservationContext, raw: TRaw): CoreRequestState {
       const startTime = performance.now();
 
       const shouldTrace = tracingEnabled && !isIgnoredPath(ctx.path);
       const shouldMetric = metricsEnabled && !isIgnoredPath(ctx.path);
       const activeSpan = trace.getActiveSpan();
+      const startCtx: HttpObservationContext = {
+        ...ctx,
+        phase: "start",
+        route: ctx.route,
+        statusCode: undefined,
+        latencyMs: undefined,
+      };
 
       if (shouldMetric) {
-        httpActiveRequests.add(1, { "http.method": ctx.method });
-        if (ctx.requestSize !== undefined) {
-          httpRequestSize.record(ctx.requestSize, { "http.method": ctx.method });
+        httpActiveRequests.add(1, { "http.method": startCtx.method });
+        if (startCtx.requestSize !== undefined) {
+          httpRequestSize.record(startCtx.requestSize, { "http.method": startCtx.method });
         }
       }
 
+      invokeLifecycleStart(startCtx, raw);
+
       if (shouldTrace && activeSpan?.isRecording()) {
-        const extra = resolveAttributes(extraAttributesFn, ctx);
+        const extra = resolveAttributes(startAttributesFn, startCtx, raw);
         activeSpan.setAttributes({
-          "http.request_id": ctx.requestId ?? "",
+          "http.request_id": startCtx.requestId ?? "",
           "vext.service": serviceName,
           ...extra,
         });
@@ -187,13 +223,19 @@ export function buildCoreHandlers(
       return { startTime, shouldTrace, shouldMetric, activeSpan };
     },
 
-    onRequestEnd(state: CoreRequestState, ctx: OtelHttpContext, statusCode: number, raw?: unknown): void {
+    onRequestEnd(state: CoreRequestState, ctx: HttpObservationContext, statusCode: number, raw: TRaw): void {
       const duration = Math.round(performance.now() - state.startTime);
       const route = ctx.route ?? ctx.path;
-      const finalCtx = { ...ctx, route };
+      const finalCtx: HttpObservationContext = {
+        ...ctx,
+        phase: "end",
+        route,
+        statusCode,
+        latencyMs: duration,
+      };
 
       if (state.shouldTrace && state.activeSpan?.isRecording()) {
-        const late = resolveAttributes(lateAttributesFn, finalCtx, raw);
+        const late = resolveAttributes(endAttributesFn, finalCtx, raw);
         state.activeSpan.setAttributes({
           "http.route": route,
           "http.status_code": statusCode,
@@ -201,7 +243,7 @@ export function buildCoreHandlers(
         });
 
         if (spanNameResolver) {
-          state.activeSpan.updateName(spanNameResolver(finalCtx));
+          state.activeSpan.updateName(spanNameResolver(finalCtx, raw));
         }
 
         if (statusCode >= 400) {
@@ -214,49 +256,48 @@ export function buildCoreHandlers(
 
       if (state.shouldMetric) {
         const labels = {
-          "http.method": ctx.method,
+          "http.method": finalCtx.method,
           "http.status_code": statusCode,
           "http.route": route,
-          ...resolveCustomLabels(ctx),
+          ...resolveLabels(finalCtx, raw),
         };
         httpRequestTotal.add(1, labels);
         httpRequestDuration.record(duration, labels);
-        httpActiveRequests.add(-1, { "http.method": ctx.method });
-        if (ctx.responseSize !== undefined) {
-          httpResponseSize.record(ctx.responseSize, { "http.method": ctx.method, "http.status_code": statusCode });
+        httpActiveRequests.add(-1, { "http.method": finalCtx.method });
+        if (finalCtx.responseSize !== undefined) {
+          httpResponseSize.record(finalCtx.responseSize, { "http.method": finalCtx.method, "http.status_code": statusCode });
         }
       }
 
-      if (options.onEnd) {
-        try {
-          options.onEnd({
-            traceId: state.activeSpan?.spanContext().traceId ?? "",
-            method: ctx.method,
-            route,
-            latencyMs: duration,
-            statusCode,
-            raw,
-          } satisfies OnEndInfo);
-        } catch (e) {
-          console.warn("[vextjs-opentelemetry] onEnd callback threw:", (e as Error).message ?? e);
-        }
+      if (lifecycle?.onEnd) {
+        invokeLifecycleEnd(finalCtx, raw, {
+          traceId: getTraceId(state.activeSpan),
+          statusCode,
+          latencyMs: duration,
+        });
       }
     },
 
-    onRequestError(state: CoreRequestState, ctx: OtelHttpContext, err: unknown, raw?: unknown): void {
+    onRequestError(state: CoreRequestState, ctx: HttpObservationContext, err: unknown, raw: TRaw): void {
       const duration = Math.round(performance.now() - state.startTime);
       const route = ctx.route ?? ctx.path;
-      const finalCtx = { ...ctx, route };
+      const finalCtx: HttpObservationContext = {
+        ...ctx,
+        phase: "end",
+        route,
+        statusCode: 500,
+        latencyMs: duration,
+      };
 
       if (state.shouldTrace && state.activeSpan?.isRecording()) {
-        const late = resolveAttributes(lateAttributesFn, finalCtx, raw);
+        const late = resolveAttributes(endAttributesFn, finalCtx, raw);
         state.activeSpan.setAttributes({
           "http.route": route,
           "http.status_code": 500,
           ...late,
         });
         if (spanNameResolver) {
-          state.activeSpan.updateName(spanNameResolver(finalCtx));
+          state.activeSpan.updateName(spanNameResolver(finalCtx, raw));
         }
         if (err instanceof Error) {
           state.activeSpan.recordException(err);
@@ -269,29 +310,23 @@ export function buildCoreHandlers(
 
       if (state.shouldMetric) {
         const labels = {
-          "http.method": ctx.method,
+          "http.method": finalCtx.method,
           "http.status_code": 500,
           "http.route": route,
-          ...resolveCustomLabels(ctx),
+          ...resolveLabels(finalCtx, raw),
         };
         httpRequestTotal.add(1, labels);
         httpRequestDuration.record(duration, labels);
-        httpActiveRequests.add(-1, { "http.method": ctx.method });
+        httpActiveRequests.add(-1, { "http.method": finalCtx.method });
       }
 
-      if (options.onEnd) {
-        try {
-          options.onEnd({
-            traceId: state.activeSpan?.spanContext().traceId ?? "",
-            method: ctx.method,
-            route,
-            latencyMs: duration,
-            statusCode: 500,
-            raw,
-          } satisfies OnEndInfo);
-        } catch (e) {
-          console.warn("[vextjs-opentelemetry] onEnd callback threw:", (e as Error).message ?? e);
-        }
+      if (lifecycle?.onEnd) {
+        invokeLifecycleEnd(finalCtx, raw, {
+          traceId: getTraceId(state.activeSpan),
+          statusCode: 500,
+          latencyMs: duration,
+          error: err,
+        });
       }
     },
   };

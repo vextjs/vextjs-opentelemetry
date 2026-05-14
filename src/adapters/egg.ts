@@ -7,10 +7,12 @@
 //   - endpoint     routerPath
 //   - latency_ms   请求总耗时（ms）
 //
-// 业务字段通过 onCtxInit 回调注入，字段来源显式可见：
-//   onCtxInit: (ctx) => {
-//     ctx.user_id = ctx.state?.userId ?? '';
-//     ctx.feature_flag = ctx.get('x-feature-flag') || '';
+// 业务字段通过统一 lifecycle 回调注入，字段来源显式可见：
+//   lifecycle: {
+//     onStart: (_ctx, rawCtx) => {
+//       rawCtx.user_id = rawCtx.state?.userId ?? '';
+//       rawCtx.feature_flag = rawCtx.get('x-feature-flag') || '';
+//     },
 //   }
 //
 // 类型扩展：在项目 typings/index.d.ts 的 egg.Context 接口中声明 ctx 字段：
@@ -32,12 +34,14 @@
 //   export default createEggMiddleware({
 //     serviceName: 'my-service',
 //     tracing: { ignorePaths: [/^\/favicon/] },
-//     onCtxInit: (ctx) => {
-//       ctx.user_id = ctx.state?.userId ?? '';
-//       ctx.feature_flag = ctx.get('x-feature-flag') || '';
-//     },
-//     onRequestDone: (ctx, info) => {
-//       ctx.logger.info(`${info.method} ${ctx.status} ${info.route} ${info.latencyMs}ms`);
+//     lifecycle: {
+//       onStart: (_ctx, rawCtx) => {
+//         rawCtx.user_id = rawCtx.state?.userId ?? '';
+//         rawCtx.feature_flag = rawCtx.get('x-feature-flag') || '';
+//       },
+//       onEnd: (ctx, rawCtx, info) => {
+//         rawCtx.logger?.info?.(`${ctx.method} ${rawCtx.status} ${ctx.route ?? ctx.path} ${info.latencyMs}ms`);
+//       },
 //     },
 //   });
 //
@@ -45,30 +49,59 @@
 //   config.middleware = ['otel'];
 
 import { trace } from "@opentelemetry/api";
+import type { Context } from "koa";
 import { createKoaMiddleware } from "./koa.js";
 import type { HttpOtelOptions } from "../core/types.js";
 
 export type { HttpOtelOptions };
 
-const ZERO_TRACE_ID = "00000000000000000000000000000000";
-
-export interface EggHttpOtelOptions extends HttpOtelOptions {
-  /**
-   * 请求初始化时的回调，在 OTel span 创建前执行。
-   * 用于注入业务特定字段（如 user_id、feature_flag）。
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onCtxInit?: (ctx: any) => void;
-  /**
-   * 请求完成时的回调，在 finally 块中执行。
-   * 用于自定义 access log 或其他请求后处理。
-   * @param info.method   HTTP 方法
-   * @param info.route    匹配的路由路径（routerPath 或 path）
-   * @param info.latencyMs 请求耗时（ms）
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onRequestDone?: (ctx: any, info: { method: string; route: string; latencyMs: number }) => void;
+export interface EggTracerLike {
+  traceId?: string;
 }
+
+export interface EggLoggerLike {
+  info?: (...args: unknown[]) => unknown;
+  warn?: (...args: unknown[]) => unknown;
+  error?: (...args: unknown[]) => unknown;
+  debug?: (...args: unknown[]) => unknown;
+}
+
+export interface EggRequestLike {
+  body?: unknown;
+  length?: number;
+}
+
+export interface EggContextLike {
+  method: string;
+  path: string;
+  status?: number;
+  routerPath?: string;
+  headers?: Record<string, string | string[] | undefined>;
+  state?: Record<string, unknown>;
+  request?: EggRequestLike;
+  logger?: EggLoggerLike;
+  tracer?: EggTracerLike;
+  trace_id?: string;
+  span_name?: string;
+  endpoint?: string;
+  latency_ms?: number;
+  get(name: string): string;
+}
+
+export type EggMiddleware<TEggCtx extends EggContextLike = EggContextLike> = (
+  ctx: TEggCtx,
+  next: () => Promise<void>,
+) => Promise<void>;
+
+export type EggMiddlewareFactory<TEggCtx extends EggContextLike = EggContextLike> = (
+  _options: unknown,
+  _app: unknown,
+) => EggMiddleware<TEggCtx>;
+
+export type EggOtelOptions<TEggCtx extends EggContextLike = EggContextLike> =
+  HttpOtelOptions<TEggCtx>;
+
+const ZERO_TRACE_ID = "00000000000000000000000000000000";
 
 /**
  * Egg.js 中间件工厂
@@ -76,19 +109,31 @@ export interface EggHttpOtelOptions extends HttpOtelOptions {
  * 符合 Egg.js 中间件规范（`(options, app) => Middleware`）。
  * 自动处理：HTTP span 创建、trace_id/span_name/endpoint/latency_ms 注入、请求计时。
  */
-export function createEggMiddleware(otelOptions: EggHttpOtelOptions = {}) {
-  const { onCtxInit, onRequestDone, ...koaOptions } = otelOptions;
-  const koaMiddleware = createKoaMiddleware(koaOptions);
+export function createEggMiddleware(
+  otelOptions?: EggOtelOptions,
+): EggMiddlewareFactory;
+export function createEggMiddleware<TEggCtx extends EggContextLike>(
+  otelOptions: EggOtelOptions<TEggCtx>,
+): EggMiddlewareFactory<TEggCtx>;
+export function createEggMiddleware<TEggCtx extends EggContextLike = EggContextLike>(
+  otelOptions: EggOtelOptions<TEggCtx> = {},
+): EggMiddlewareFactory<TEggCtx> {
+  const koaMiddleware = createKoaMiddleware(
+    otelOptions as unknown as HttpOtelOptions<Context>,
+  );
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return function eggMiddlewareFactory(_options: unknown, _app: unknown): any {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return async function otelEggMiddleware(ctx: any, next: () => Promise<void>): Promise<void> {
+  return function eggMiddlewareFactory(
+    _options: unknown,
+    _app: unknown,
+  ): EggMiddleware<TEggCtx> {
+    return async function otelEggMiddleware(
+      ctx: TEggCtx,
+      next: () => Promise<void>,
+    ): Promise<void> {
       ctx.trace_id = "";
       ctx.span_name = `${ctx.method} ${ctx.path}`;
       ctx.endpoint = ctx.path;
       ctx.latency_ms = 0;
-      onCtxInit?.(ctx);
 
       const wrappedNext = async () => {
         const rawTraceId = trace.getActiveSpan()?.spanContext().traceId ?? "";
@@ -102,14 +147,13 @@ export function createEggMiddleware(otelOptions: EggHttpOtelOptions = {}) {
 
       const startTime = performance.now();
       try {
-        await koaMiddleware(ctx, wrappedNext);
+        await koaMiddleware(ctx as unknown as Context, wrappedNext);
       } finally {
         const route = ctx.routerPath ?? ctx.path;
         const latencyMs = Math.round(performance.now() - startTime);
         ctx.span_name = `${ctx.method} ${route}`;
         ctx.endpoint = route;
         ctx.latency_ms = latencyMs;
-        onRequestDone?.(ctx, { method: ctx.method, route, latencyMs });
       }
     };
   };

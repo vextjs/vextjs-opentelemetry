@@ -49,12 +49,13 @@ vi.mock("@opentelemetry/api", () => ({
 }));
 
 import { buildCoreHandlers } from "../src/core/http-core.js";
-import type { OtelHttpContext } from "../src/core/types.js";
+import type { HttpObservationContext } from "../src/core/types.js";
 
 // ── 测试工具 ──────────────────────────────────────────────────
 
-function makeCtx(overrides: Partial<OtelHttpContext> = {}): OtelHttpContext {
+function makeCtx(overrides: Partial<HttpObservationContext> = {}): HttpObservationContext {
     return {
+        phase: "start",
         method: "GET",
         path: "/api/items",
         route: undefined,
@@ -64,9 +65,9 @@ function makeCtx(overrides: Partial<OtelHttpContext> = {}): OtelHttpContext {
     };
 }
 
-// ── onEnd 钩子（F-03）─────────────────────────────────────────
+// ── lifecycle.onEnd 钩子（F-03）────────────────────────────────
 
-describe("buildCoreHandlers onEnd 钩子", () => {
+describe("buildCoreHandlers lifecycle.onEnd 钩子", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockGetActiveSpan.mockReturnValue(mockSpan as never);
@@ -74,77 +75,80 @@ describe("buildCoreHandlers onEnd 钩子", () => {
 
     // ── onRequestEnd 正常路径 ─────────────────────────────────
 
-    it("onRequestEnd：onEnd 回调以正确字段被调用", () => {
+    it("onRequestEnd：lifecycle.onEnd 回调以正确字段被调用", () => {
         const onEnd = vi.fn();
-        const handlers = buildCoreHandlers({ onEnd });
-        const state = handlers.onRequestStart(makeCtx());
+        const handlers = buildCoreHandlers({ lifecycle: { onEnd } });
+        const state = handlers.onRequestStart(makeCtx(), undefined);
         const raw = { framework: "koa" };
-        handlers.onRequestEnd(state, makeCtx({ route: "/api/:id" }), 200, raw);
+        const endCtx = makeCtx({ phase: "end", route: "/api/:id" });
+        handlers.onRequestEnd(state, endCtx, 200, raw);
 
         expect(onEnd).toHaveBeenCalledOnce();
-        const info = onEnd.mock.calls[0][0] as {
+        expect(onEnd).toHaveBeenCalledWith(
+            expect.objectContaining({ phase: "end", route: "/api/:id", statusCode: 200 }),
+            raw,
+            expect.objectContaining({
+                traceId: "deadbeef0000000000000000cafebabe",
+                statusCode: 200,
+                latencyMs: expect.any(Number),
+            }),
+        );
+        const info = onEnd.mock.calls[0][2] as {
             traceId: string;
-            method: string;
-            route: string;
             latencyMs: number;
             statusCode: number;
         };
         expect(info.traceId).toBe("deadbeef0000000000000000cafebabe");
-        expect(info.method).toBe("GET");
-        expect(info.route).toBe("/api/:id");
         expect(typeof info.latencyMs).toBe("number");
         expect(info.latencyMs).toBeGreaterThanOrEqual(0);
         expect(info.statusCode).toBe(200);
-        expect((info as { raw?: unknown }).raw).toBe(raw);
     });
 
     it("onRequestEnd：route 未定义时回退到 path", () => {
         const onEnd = vi.fn();
-        const handlers = buildCoreHandlers({ onEnd });
-        const state = handlers.onRequestStart(makeCtx());
-        handlers.onRequestEnd(state, makeCtx({ route: undefined, path: "/api/items" }), 200);
+        const handlers = buildCoreHandlers({ lifecycle: { onEnd } });
+        const state = handlers.onRequestStart(makeCtx(), undefined);
+        handlers.onRequestEnd(state, makeCtx({ phase: "end", route: undefined, path: "/api/items" }), 200, undefined);
 
-        const info = onEnd.mock.calls[0][0] as { route: string };
-        expect(info.route).toBe("/api/items");
+        const endCtx = onEnd.mock.calls[0][0] as { route: string };
+        expect(endCtx.route).toBe("/api/items");
     });
 
     it("onRequestEnd：4xx 状态码被正确透传", () => {
         const onEnd = vi.fn();
-        const handlers = buildCoreHandlers({ onEnd });
-        const state = handlers.onRequestStart(makeCtx());
-        handlers.onRequestEnd(state, makeCtx(), 404);
+        const handlers = buildCoreHandlers({ lifecycle: { onEnd } });
+        const state = handlers.onRequestStart(makeCtx(), undefined);
+        handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 404, undefined);
 
-        const info = onEnd.mock.calls[0][0] as { statusCode: number };
+        const info = onEnd.mock.calls[0][2] as { statusCode: number };
         expect(info.statusCode).toBe(404);
     });
 
-    it("onRequestEnd：span 不存在时 traceId 为空字符串", () => {
+    it("onRequestEnd：span 不存在时 lifecycle.onEnd 中 traceId 为空字符串", () => {
         mockGetActiveSpan.mockReturnValueOnce(undefined);
         const onEnd = vi.fn();
-        const handlers = buildCoreHandlers({ onEnd });
-        const state = handlers.onRequestStart(makeCtx());
-        handlers.onRequestEnd(state, makeCtx(), 200);
+        const handlers = buildCoreHandlers({ lifecycle: { onEnd } });
+        const state = handlers.onRequestStart(makeCtx(), undefined);
+        handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 200, undefined);
 
-        const info = onEnd.mock.calls[0][0] as { traceId: string };
+        const info = onEnd.mock.calls[0][2] as { traceId: string };
         expect(info.traceId).toBe("");
     });
 
-    it("onRequestEnd：onEnd 未传时不抛错", () => {
+    it("onRequestEnd：lifecycle.onEnd 未传时不抛错", () => {
         const handlers = buildCoreHandlers({});
-        const state = handlers.onRequestStart(makeCtx());
-        expect(() => handlers.onRequestEnd(state, makeCtx(), 200)).not.toThrow();
+        const state = handlers.onRequestStart(makeCtx(), undefined);
+        expect(() => handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 200, undefined)).not.toThrow();
     });
 
-    it("onRequestEnd：onEnd 抛错时 console.warn 但不传播异常", () => {
+    it("onRequestEnd：lifecycle.onEnd 抛错时 console.warn 但不传播异常", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => { });
         const handlers = buildCoreHandlers({
-            onEnd: () => {
-                throw new Error("callback-err");
-            },
+            lifecycle: { onEnd: () => { throw new Error("callback-err"); } },
         });
-        const state = handlers.onRequestStart(makeCtx());
+        const state = handlers.onRequestStart(makeCtx(), undefined);
 
-        expect(() => handlers.onRequestEnd(state, makeCtx(), 200)).not.toThrow();
+        expect(() => handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 200, undefined)).not.toThrow();
         expect(warnSpy).toHaveBeenCalledWith(
             expect.stringContaining("[vextjs-opentelemetry]"),
             expect.stringContaining("callback-err"),
@@ -154,48 +158,51 @@ describe("buildCoreHandlers onEnd 钩子", () => {
 
     // ── onRequestError 异常路径 ───────────────────────────────
 
-    it("onRequestError：onEnd 以 statusCode=500 被调用", () => {
+    it("onRequestError：lifecycle.onEnd 以 statusCode=500 被调用", () => {
         const onEnd = vi.fn();
-        const handlers = buildCoreHandlers({ onEnd });
-        const state = handlers.onRequestStart(makeCtx());
+        const handlers = buildCoreHandlers({ lifecycle: { onEnd } });
+        const state = handlers.onRequestStart(makeCtx(), undefined);
         const raw = { framework: "express" };
-        handlers.onRequestError(state, makeCtx({ route: "/api/:id" }), new Error("bad"), raw);
+        handlers.onRequestError(state, makeCtx({ phase: "end", route: "/api/:id" }), new Error("bad"), raw);
 
         expect(onEnd).toHaveBeenCalledOnce();
-        const info = onEnd.mock.calls[0][0] as {
+        expect(onEnd).toHaveBeenCalledWith(
+            expect.objectContaining({ phase: "end", route: "/api/:id", statusCode: 500 }),
+            raw,
+            expect.objectContaining({
+                traceId: "deadbeef0000000000000000cafebabe",
+                statusCode: 500,
+                latencyMs: expect.any(Number),
+                error: expect.any(Error),
+            }),
+        );
+        const info = onEnd.mock.calls[0][2] as {
             traceId: string;
-            method: string;
-            route: string;
             latencyMs: number;
             statusCode: number;
         };
         expect(info.statusCode).toBe(500);
         expect(info.traceId).toBe("deadbeef0000000000000000cafebabe");
-        expect(info.method).toBe("GET");
-        expect(info.route).toBe("/api/:id");
         expect(info.latencyMs).toBeGreaterThanOrEqual(0);
-        expect((info as { raw?: unknown }).raw).toBe(raw);
     });
 
-    it("onRequestError：onEnd 未传时不抛错", () => {
+    it("onRequestError：lifecycle.onEnd 未传时不抛错", () => {
         const handlers = buildCoreHandlers({});
-        const state = handlers.onRequestStart(makeCtx());
+        const state = handlers.onRequestStart(makeCtx(), undefined);
         expect(() =>
-            handlers.onRequestError(state, makeCtx(), new Error("x")),
+            handlers.onRequestError(state, makeCtx({ phase: "end" }), new Error("x"), undefined),
         ).not.toThrow();
     });
 
-    it("onRequestError：onEnd 抛错时 console.warn 但不传播异常", () => {
+    it("onRequestError：lifecycle.onEnd 抛错时 console.warn 但不传播异常", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => { });
         const handlers = buildCoreHandlers({
-            onEnd: () => {
-                throw new Error("err-in-callback");
-            },
+            lifecycle: { onEnd: () => { throw new Error("err-in-callback"); } },
         });
-        const state = handlers.onRequestStart(makeCtx());
+        const state = handlers.onRequestStart(makeCtx(), undefined);
 
         expect(() =>
-            handlers.onRequestError(state, makeCtx(), new Error("req-error")),
+            handlers.onRequestError(state, makeCtx({ phase: "end" }), new Error("req-error"), undefined),
         ).not.toThrow();
         expect(warnSpy).toHaveBeenCalledWith(
             expect.stringContaining("[vextjs-opentelemetry]"),
@@ -204,14 +211,14 @@ describe("buildCoreHandlers onEnd 钩子", () => {
         warnSpy.mockRestore();
     });
 
-    it("onRequestError：span 不存在时 traceId 为空字符串", () => {
+    it("onRequestError：span 不存在时 lifecycle.onEnd 中 traceId 为空字符串", () => {
         mockGetActiveSpan.mockReturnValueOnce(undefined);
         const onEnd = vi.fn();
-        const handlers = buildCoreHandlers({ onEnd });
-        const state = handlers.onRequestStart(makeCtx());
-        handlers.onRequestError(state, makeCtx(), new Error("no-span"));
+        const handlers = buildCoreHandlers({ lifecycle: { onEnd } });
+        const state = handlers.onRequestStart(makeCtx(), undefined);
+        handlers.onRequestError(state, makeCtx({ phase: "end" }), new Error("no-span"), undefined);
 
-        const info = onEnd.mock.calls[0][0] as { traceId: string };
+        const info = onEnd.mock.calls[0][2] as { traceId: string };
         expect(info.traceId).toBe("");
     });
 });

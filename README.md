@@ -24,7 +24,6 @@
 - [内置指标](#内置指标)
 - [在代码中访问](#在代码中访问)
 - [框架差异对比](#框架差异对比)
-- [兼容性与升级建议](#兼容性与升级建议)
 - [文档](#文档)
 - [许可证](#许可证)
 
@@ -65,15 +64,15 @@ npm install @opentelemetry/instrumentation-http \
 
 ## 端点格式说明
 
-所有框架的 `endpoint` 字段遵循相同规则：
+`endpoint` 存在两类初始化入口，**不要把它们混为一套规则**：
 
-| 格式                 | 传输协议                | 适用场景                                          |
-| -------------------- | ----------------------- | ------------------------------------------------- |
-| `"host:port"`        | gRPC h2c（明文 HTTP/2） | 内网/自建 Collector（Jaeger、K8s OTel Collector） |
-| `"http://host:port"` | OTLP HTTP               | 公网或明确需要 HTTP                               |
-| `"none"` / 不传      | 不上报                  | 本地开发、测试                                    |
+| 场景 | 配置入口 | `host:port` 含义 | 其他说明 |
+| --- | --- | --- | --- |
+| VextJS 预加载 / plugin | `package.json vext.otel.endpoint`、`opentelemetryPlugin({ endpoint, protocol })` | 由 `protocol` 决定：`protocol: "grpc"` 时走 gRPC h2c；`protocol: "http"` 时走 OTLP HTTP | 当前默认 `protocol` 为 `"http"`，因此只写 `host:port` 但不显式改协议时，会按 HTTP 处理 |
+| Egg / Koa 手动初始化 | `initOtel({ endpoint })` | 默认走 gRPC h2c | `initOtel()` 不暴露单独 `protocol` 字段；`http://...` 才会切到 OTLP HTTP |
+| 统一关闭导出 | `endpoint: "none"` 或不传 | 不上报 | 适合本地开发、测试或仅保留 Noop SDK |
 
-> **为什么默认用 gRPC h2c？** `@grpc/grpc-js` 与部分自建采集器的 h2c 握手不兼容（永远 CONNECTING）。本实现直接用 `node:http2`，绕开此问题，兼容性更好。
+> **为什么推荐 gRPC h2c？** `@grpc/grpc-js` 与部分自建采集器的 h2c 握手不兼容（永远 CONNECTING）。Egg/Koa 的 `initOtel()` 直接用 `node:http2`，可以绕开这类兼容性问题。VextJS 场景若也想走 h2c，请显式写 `protocol: "grpc"`。
 
 > **导出日志策略**：默认只保留**真正已配置导出目标时的启动摘要**、**首次失败告警**与**失败后的首次恢复提示**。
 > 不会为每一批成功导出持续打印 `Trace/Metrics/Logs export OK`；当处于 `deferred export`（等待插件 setup 接管）时，也不会默认打印启动摘要，避免在 VextJS 场景中误导用户把阶段性状态当成最终状态。
@@ -112,17 +111,23 @@ import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
 
 export default opentelemetryPlugin({
   serviceName: "my-app",
-  endpoint: "47.89.182.109:32767", // host:port → gRPC h2c
+  endpoint: "47.89.182.109:32767", // host:port + protocol=grpc → gRPC h2c
   protocol: "grpc",
 
   tracing: {
     ignorePaths: ["/health", "/_otel/status"],
-    spanNameResolver: (req) => `${req.method} ${String(req.route ?? req.path)}`,
+    spanNameResolver: (ctx) => `${ctx.method} ${String(ctx.route ?? ctx.path)}`,
+    startAttributes: (_ctx, req) => ({
+      "tenant.id": (req.headers?.["x-tenant-id"] as string) ?? "",
+    }),
+    endAttributes: (_ctx, req) => ({
+      "http.query": JSON.stringify((req as any).query ?? {}),
+    }),
   },
 
   metrics: {
     durationBuckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
-    customLabels: () => ({
+    labels: () => ({
       "deployment.environment": process.env.NODE_ENV ?? "development",
     }),
   },
@@ -132,12 +137,14 @@ export default opentelemetryPlugin({
     globalAttributes: { "app.version": "1.0.0" },
   },
 
-  onEnd: (info) => {
-    if (info.statusCode >= 500) {
-      console.warn(
-        `[otel] ${info.method} ${info.route} → ${info.statusCode} trace=${info.traceId}`,
-      );
-    }
+  lifecycle: {
+    onEnd: (ctx, _req, info) => {
+      if (info.statusCode >= 500) {
+        console.warn(
+          `[otel] ${ctx.method} ${ctx.route ?? ctx.path} → ${info.statusCode} trace=${info.traceId}`,
+        );
+      }
+    },
   },
 });
 ```
@@ -204,27 +211,45 @@ initOtel({
 ### Step 3：OTel 中间件（`app/middleware/otel.ts`）
 
 ```typescript
-import { createEggMiddleware } from "vextjs-opentelemetry/egg";
+import {
+  createEggMiddleware,
+  type EggContextLike,
+} from "vextjs-opentelemetry/egg";
 
-export default createEggMiddleware({
+type AppEggContext = EggContextLike & {
+  user_id?: string;
+  feature_flag?: string;
+  state?: Record<string, unknown> & {
+    userId?: string;
+    user?: { id?: string };
+  };
+};
+
+export default createEggMiddleware<AppEggContext>({
   serviceName: "my-service",
   tracing: {
     ignorePaths: [/^\/favicon/, /^\/_/, "/health"],
     spanNameResolver: (ctx) => `${ctx.method} ${ctx.route ?? ctx.path}`,
+    startAttributes: (_ctx, rawCtx) => ({
+      "tenant.id": rawCtx.get("x-tenant-id") || "",
+    }),
+    endAttributes: (_ctx, rawCtx) => ({
+      "http.request.body": JSON.stringify(rawCtx.request?.body ?? {}),
+    }),
   },
   metrics: {
-    customLabels: (ctx) => ({ "http.path": ctx.route ?? ctx.path }),
+    labels: (ctx) => ({ "http.path": ctx.route ?? ctx.path }),
   },
-  // 业务字段注入（每个服务按需实现）
-  onCtxInit: (ctx) => {
-    ctx.user_id = ctx.state?.userId ?? ctx.state?.user?.id ?? "";
-    ctx.feature_flag = ctx.get("x-feature-flag") || "";
-  },
-  // 自定义 access log
-  onRequestDone: (ctx, info) => {
-    ctx.logger.info(
-      `${info.method} ${ctx.status} ${info.route} ${info.latencyMs}ms`,
-    );
+  lifecycle: {
+    onStart: (_ctx, rawCtx) => {
+      rawCtx.user_id = rawCtx.state?.userId ?? rawCtx.state?.user?.id ?? "";
+      rawCtx.feature_flag = rawCtx.get("x-feature-flag") || "";
+    },
+    onEnd: (ctx, rawCtx, info) => {
+      rawCtx.logger.info(
+        `${ctx.method} ${rawCtx.status} ${ctx.route ?? ctx.path} ${info.latencyMs}ms`,
+      );
+    },
   },
 });
 ```
@@ -323,6 +348,9 @@ initOtel({
 
 ## Express
 
+> Express / Hono / Fastify 只提供 HTTP 中间件 / 插件适配层，**不提供** `initOtel()` 子路径。
+> 这三类框架请先通过 `node --import vextjs-opentelemetry/instrumentation ...` 或自建 bootstrap 完成 SDK 初始化，再注册中间件 / 插件。
+
 ```typescript
 import express from "express";
 import { createExpressMiddleware } from "vextjs-opentelemetry/express";
@@ -372,15 +400,32 @@ fastify.get("/_otel/status", () => getOtelStatus());
 
 ## 通用配置接口（HttpOtelOptions）
 
-所有 HTTP 适配器都支持同一套 tracing / metrics 概念。
-其中：
+所有 HTTP 适配器现在都收敛到**同一套配置模型**：
 
-- 非 VextJS 适配器直接复用 `HttpOtelOptions`
-- VextJS 使用专属 `OpenTelemetryPluginOptions`，只是为了把回调参数收窄为 `VextRequest`
+- `tracing.startAttributes`
+- `tracing.endAttributes`
+- `metrics.labels`
+- `lifecycle.onStart`
+- `lifecycle.onEnd`
 
-也就是说，`extraAttributes` / `lateAttributes` **是通用能力，不是某个框架专有**。
+不同框架只在**加载方式**和 `raw` 参数类型上不同；配置字段本身保持一致。
 
-非 VextJS 适配器的通用接口如下：
+### SDK 初始化配置入口
+
+下面这组字段决定 SDK 如何导出；它们**不属于** `HttpOtelOptions`，而属于各框架的初始化入口：
+
+| 字段 | VextJS `package.json vext.otel` | VextJS `opentelemetryPlugin()` | Egg / Koa `initOtel()` | 默认值 / 说明 |
+| --- | --- | --- | --- | --- |
+| `serviceName` | ✅ | ✅ | ✅ | 未显式提供时依次回退到 `OTEL_SERVICE_NAME`、应用 `package.json.name`、`vext-app` |
+| `endpoint` | ✅ | ✅ | ✅ | 默认 `none` |
+| `protocol` | ✅ | ✅ | — | 默认 `http`；仅 VextJS 初始化链路支持单独配置 |
+| `headers` | ✅ | ✅ | ✅ | OTLP 请求头 |
+| `sampling.ratio` | ✅ | — | — | 默认 `1`；也可走 `OTEL_TRACES_SAMPLER_ARG` |
+| `metricIntervalMs` | ✅ | — | ✅ | 默认 `15000`；VextJS 也支持 `OTEL_METRIC_EXPORT_INTERVAL` |
+
+> `Express / Hono / Fastify` 没有内置初始化 helper：如果你在这些框架里需要配置 `endpoint / headers / sampling.ratio / metricIntervalMs`，请在应用启动阶段使用 `instrumentation` 预加载或自己的 SDK bootstrap 来完成。
+
+通用接口如下：
 
 ```typescript
 import type { HttpOtelOptions } from "vextjs-opentelemetry";
@@ -392,10 +437,10 @@ const options: HttpOtelOptions = {
     enabled: true,
     ignorePaths: ["/health", /^\/internal\//],
     spanNameResolver: (ctx) => `${ctx.method} ${ctx.route ?? ctx.path}`,
-    extraAttributes: (ctx) => ({
+    startAttributes: (ctx) => ({
       "tenant.id": ctx.headers["x-tenant-id"] ?? "",
     }),
-    lateAttributes: (_ctx, raw) => ({
+    endAttributes: (_ctx, raw) => ({
       // 适合读取框架原始 request/context（例如 Koa ctx.state / Hono c.req.raw）
       "request.has_raw": Boolean(raw),
     }),
@@ -404,50 +449,70 @@ const options: HttpOtelOptions = {
   metrics: {
     enabled: true,
     durationBuckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
-    customLabels: (ctx) => ({
+    labels: (ctx) => ({
       "api.version": ctx.headers["x-api-version"] ?? "v1",
     }),
   },
 
-  onEnd: (info) => {
-    // info: { traceId, method, route, latencyMs, statusCode }
-    console.log(
-      `${info.method} ${info.route} ${info.statusCode} ${info.latencyMs}ms`,
-    );
+  lifecycle: {
+    onEnd: (ctx, _raw, info) => {
+      console.log(
+        `${ctx.method} ${ctx.route ?? ctx.path} ${info.statusCode} ${info.latencyMs}ms`,
+      );
+    },
   },
 };
 ```
 
-**Egg.js 专属扩展**（`EggHttpOtelOptions`）：
-
-```typescript
-const eggOptions: Record<string, unknown> = {
-// onCtxInit: span 创建前执行，注入业务字段到 ctx
-onCtxInit: (ctx: any) => {
-  ctx.user_id = ctx.state?.userId ?? '';
-  ctx.feature_flag = ctx.get('x-feature-flag') || '';
-},
-
-// onRequestDone: 请求完成后执行（finally 块，span/指标操作已完成）
-onRequestDone: (ctx: any, info: { method: string; route: string; latencyMs: number }) => {
-  // info: { method, route, latencyMs }
-  ctx.logger.info(`${info.method} ${ctx.status} ${info.route} ${info.latencyMs}ms`);
-},
-};
-```
-
-### `extraAttributes` vs `lateAttributes`
+### 开始 / 结束阶段职责
 
 | Hook | 触发时机 | 适合场景 |
 | --- | --- | --- |
-| `extraAttributes` | 请求开始时 | 从标准化 `OtelHttpContext` 快速提取低基数字段 |
-| `lateAttributes` | 请求结束/异常时 | 需要 `route`、`statusCode` 或框架原始对象（raw request/context）的字段 |
+| `startAttributes` | 请求开始时 | 请求头、requestId、租户、客户端来源等早期稳定字段 |
+| `endAttributes` | 请求结束 / 异常时 | `route`、`statusCode`、`latencyMs`、`params/query/body`、需要 raw request/context 的字段 |
+| `lifecycle.onStart` | 请求开始时 | ctx/request 上下文字段回写、非 attribute 类副作用 |
+| `lifecycle.onEnd` | 请求结束 / 异常时 | access log、trace 日志关联、最终收尾逻辑 |
 
-`lateAttributes` 的函数签名为 `(ctx, raw) => ({ ... })`：
-- `ctx.route` 在此阶段已解析完成；
-- `raw` 为各适配器透传的原始对象：Express `{ req, res }`、Koa/Egg `ctx`、Hono `c`、Fastify `{ request, reply }`。
+各适配器透传的 `raw` 参数：
+- Express → `{ req, res }`
+- Koa / Egg → `ctx`
+- Hono → `c`
+- Fastify → `{ request, reply }`
+- VextJS → `req`
 
-VextJS 也支持这两个钩子；区别只在于它直接把回调参数收窄为 `req: VextRequest`，因为该适配器本身就以 `req` 作为原始上下文，无需再额外透传第二个 `raw` 参数。
+### Egg.js 类型提示
+
+```typescript
+import {
+  createEggMiddleware,
+  type EggContextLike,
+} from "vextjs-opentelemetry/egg";
+
+type AppEggContext = EggContextLike & {
+  user_id?: string;
+  feature_flag?: string;
+  state?: Record<string, unknown> & { userId?: string };
+};
+
+createEggMiddleware<AppEggContext>({
+  lifecycle: {
+    onStart: (_ctx, rawCtx) => {
+      // rawCtx 会自动推导为 AppEggContext，不需要再手动补 any 标注
+      rawCtx.user_id = rawCtx.state?.userId ?? "";
+      rawCtx.feature_flag = rawCtx.get("x-feature-flag") || "";
+    },
+    onEnd: (ctx, rawCtx, info) => {
+      rawCtx.logger?.info?.(
+        `${ctx.method} ${rawCtx.status} ${ctx.route ?? ctx.path} ${info.latencyMs}ms`,
+      );
+    },
+  },
+});
+
+function bindEggCtx(rawCtx: EggContextLike) {
+  rawCtx.trace_id = rawCtx.trace_id ?? "";
+}
+```
 
 ---
 
@@ -511,52 +576,15 @@ console.log(getOtelStatus());
 | ----------------------------- | ----------------------- | ------------------------- | ------------------------ |
 | SDK 初始化                    | `--import`（自动/手动） | `--require otel-init.cjs` | `--import` 或应用自建 bootstrap/init 文件 |
 | exporter 配置位置             | `package.json vext.otel` / plugin options | `initOtel()` | 应用侧自行初始化 SDK（无内置 `initOtel()` 子路径） |
-| 中间件                        | `opentelemetryPlugin()` | `createEggMiddleware()`   | `createXxxMiddleware()`  |
-| 业务字段注入                  | `extraAttributes` / `lateAttributes`（`req` 类型化） | Egg：`onCtxInit` + `extraAttributes` / `lateAttributes`；Koa：`extraAttributes` / `lateAttributes` | `extraAttributes` / `lateAttributes` |
+| 中间件 / 插件入口             | `opentelemetryPlugin()` | `createEggMiddleware()` / `createKoaMiddleware()` | `createXxxMiddleware()`  |
+| 统一配置字段                  | `startAttributes / endAttributes / metrics.labels / lifecycle` | 同一套配置字段 | 同一套配置字段 |
 | logger bridge                 | `logs.bridgeAppLogger`  | `createOtelLogBridge`     | 手动                     |
-| `onCtxInit` / `onRequestDone` | ❌                      | Egg：✅ / Koa：❌         | ❌                       |
 
 ### VextJS 状态接口
 
 `vextjs` 适配器当前会自动注册 `GET /_otel/status`，直接返回 `app.otel.getStatus()`。
 `statusEndpoint` 选项仅保留作兼容占位，不支持自定义路径。
 
-## 兼容性与升级建议
-
-### 本次 `1.0.6` 调整是否属于兼容版本？
-
-是。当前变更仍属于 **patch 级别兼容修复**：
-
-- 保留既有公开子路径：`/koa`、`/egg`、`/express`、`/hono`、`/fastify`、`/vextjs`
-- `initOtel()` 的使用方式未变（仍位于 `/koa` 子路径）
-- Egg 场景的 `createEggMiddleware()` 签名未变
-- 新增的 `lateAttributes` 仅扩展能力，不破坏已有 `extraAttributes` 语义
-
-### `chat` / `user` / `payment` 从旧版本升级到 `1.0.6` 是否兼容？
-
-按当前仓库内的实际接入方式来看，**代码层面兼容**。
-
-这三个服务当前都通过：
-
-- `require("vextjs-opentelemetry/koa")`
-- 调用 `initOtel({...})`
-- 使用 Egg 风格的 `--require ./app/otel-init.cjs`
-
-而这些入口在 `1.0.6` 中都保持不变，因此**无需因为本次发布去修改业务代码**。
-
-### 升级前需要额外确认什么？
-
-1. **Node.js 运行时**：当前包声明仍为 `>=18`，而 `chat` / `user` / `payment` 的各自 `package.json` 仍写 `>=16`。
-   - 如果生产 / 测试环境实际已经是 Node 18+：可直接升级依赖；
-   - 如果仍运行在 Node 16：这不是 `1.0.6` 新引入的问题，但依然属于未满足包声明的环境，建议先统一运行时版本或同步提升这些服务的 engines 声明。
-2. **重新安装依赖后复核启动脚本**：建议至少验证 `--require ./app/otel-init.cjs` 启动路径仍正常。
-3. **如需利用新能力**：只有在想读取请求结束阶段的原始上下文时，才需要额外改造为 `lateAttributes`；否则保持现状即可。
-
-### 发布前建议验证
-
-```bash
-npm run verify
-```
 
 ---
 

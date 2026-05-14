@@ -49,14 +49,15 @@ vi.mock("@opentelemetry/api", () => ({
 }));
 
 import { buildCoreHandlers } from "../src/core/http-core.js";
-import type { OtelHttpContext } from "../src/core/types.js";
+import type { HttpObservationContext } from "../src/core/types.js";
 
 vi.spyOn(console, "warn").mockImplementation(() => {});
 
 // ── 测试工具 ──────────────────────────────────────────────────
 
-function makeCtx(overrides: Partial<OtelHttpContext> = {}): OtelHttpContext {
+function makeCtx(overrides: Partial<HttpObservationContext> = {}): HttpObservationContext {
   return {
+    phase: "start",
     method: "GET",
     path: "/test",
     route: undefined,
@@ -77,7 +78,7 @@ describe("buildCoreHandlers", () => {
   describe("onRequestStart", () => {
     it("应返回包含 shouldTrace=true 和 activeSpan 的 state", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       expect(state.shouldTrace).toBe(true);
       expect(state.activeSpan).toBe(mockSpan);
       expect(state.startTime).toBeGreaterThan(0);
@@ -85,49 +86,49 @@ describe("buildCoreHandlers", () => {
 
     it("ignorePaths 字符串完全匹配时 shouldTrace=false 且 shouldMetric=false", () => {
       const handlers = buildCoreHandlers({ tracing: { ignorePaths: ["/health"] } });
-      const state = handlers.onRequestStart(makeCtx({ path: "/health" }));
+      const state = handlers.onRequestStart(makeCtx({ path: "/health" }), undefined);
       expect(state.shouldTrace).toBe(false);
       expect(state.shouldMetric).toBe(false);
     });
 
     it("ignorePaths 正则匹配时 shouldTrace=false 且 shouldMetric=false", () => {
       const handlers = buildCoreHandlers({ tracing: { ignorePaths: [/^\/internal\//] } });
-      const state = handlers.onRequestStart(makeCtx({ path: "/internal/debug" }));
+      const state = handlers.onRequestStart(makeCtx({ path: "/internal/debug" }), undefined);
       expect(state.shouldTrace).toBe(false);
       expect(state.shouldMetric).toBe(false);
     });
 
     it("tracing.enabled=false 时 shouldTrace=false", () => {
       const handlers = buildCoreHandlers({ tracing: { enabled: false } });
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       expect(state.shouldTrace).toBe(false);
       expect(mockSpan.setAttributes).not.toHaveBeenCalled();
     });
 
     it("调用 httpActiveRequests.add(1)", () => {
       const handlers = buildCoreHandlers({});
-      handlers.onRequestStart(makeCtx());
+      handlers.onRequestStart(makeCtx(), undefined);
       expect(mockUpDownCounter.add).toHaveBeenCalledWith(1, { "http.method": "GET" });
     });
 
     it("SDK 未初始化（span 为 undefined）时不崩溃", () => {
       mockGetActiveSpan.mockReturnValueOnce(undefined);
       const handlers = buildCoreHandlers({});
-      expect(() => handlers.onRequestStart(makeCtx())).not.toThrow();
+      expect(() => handlers.onRequestStart(makeCtx(), undefined)).not.toThrow();
     });
 
     it("span.isRecording()=false 时不设置属性", () => {
       mockSpan.isRecording.mockReturnValueOnce(false);
       const handlers = buildCoreHandlers({});
-      handlers.onRequestStart(makeCtx());
+      handlers.onRequestStart(makeCtx(), undefined);
       expect(mockSpan.setAttributes).not.toHaveBeenCalled();
     });
 
     it("extraAttributes 函数被调用时注入属性", () => {
-      const extraAttributes = vi.fn(() => ({ "custom.key": "val" }));
-      const handlers = buildCoreHandlers({ tracing: { extraAttributes } });
-      handlers.onRequestStart(makeCtx());
-      expect(extraAttributes).toHaveBeenCalled();
+      const startAttributes = vi.fn(() => ({ "custom.key": "val" }));
+      const handlers = buildCoreHandlers({ tracing: { startAttributes } });
+      handlers.onRequestStart(makeCtx(), undefined);
+      expect(startAttributes).toHaveBeenCalled();
       expect(mockSpan.setAttributes).toHaveBeenCalledWith(
         expect.objectContaining({ "custom.key": "val" }),
       );
@@ -136,12 +137,12 @@ describe("buildCoreHandlers", () => {
     it("extraAttributes 函数抛错时不崩溃（降级为空对象）", () => {
       const handlers = buildCoreHandlers({
         tracing: {
-          extraAttributes: () => {
+          startAttributes: () => {
             throw new Error("boom");
           },
         },
       });
-      expect(() => handlers.onRequestStart(makeCtx())).not.toThrow();
+      expect(() => handlers.onRequestStart(makeCtx(), undefined)).not.toThrow();
     });
   });
 
@@ -150,9 +151,9 @@ describe("buildCoreHandlers", () => {
   describe("onRequestEnd", () => {
     it("200 响应时记录指标且不设置 ERROR 状态", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx({ route: "/test/:id" }), 200);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end", route: "/test/:id" }), 200, undefined);
 
       expect(mockCounter.add).toHaveBeenCalledWith(
         1,
@@ -164,9 +165,9 @@ describe("buildCoreHandlers", () => {
 
     it("4xx 响应时设置 Span ERROR 状态", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx(), 404);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 404, undefined);
       expect(mockSpan.setStatus).toHaveBeenCalledWith(
         expect.objectContaining({ code: 2 }),
       );
@@ -174,9 +175,9 @@ describe("buildCoreHandlers", () => {
 
     it("5xx 响应时设置 Span ERROR 状态", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx(), 500);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 500, undefined);
       expect(mockSpan.setStatus).toHaveBeenCalledWith(
         expect.objectContaining({ code: 2 }),
       );
@@ -185,28 +186,28 @@ describe("buildCoreHandlers", () => {
     it("spanNameResolver 被调用时更新 Span 名称", () => {
       const spanNameResolver = vi.fn(() => "GET /test/:id");
       const handlers = buildCoreHandlers({ tracing: { spanNameResolver } });
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx({ route: "/test/:id" }), 200);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end", route: "/test/:id" }), 200, undefined);
       expect(spanNameResolver).toHaveBeenCalled();
       expect(mockSpan.updateName).toHaveBeenCalledWith("GET /test/:id");
     });
 
     it("activeRequests.add(-1) 应被调用", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx(), 200);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 200, undefined);
       expect(mockUpDownCounter.add).toHaveBeenCalledWith(-1, { "http.method": "GET" });
     });
 
-    it("customLabels 函数附加到指标标签", () => {
+    it("metrics.labels 函数附加到指标标签", () => {
       const handlers = buildCoreHandlers({
-        metrics: { customLabels: () => ({ "tenant.id": "xyz" }) },
+        metrics: { labels: () => ({ "tenant.id": "xyz" }) },
       });
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx(), 200);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 200, undefined);
       expect(mockCounter.add).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ "tenant.id": "xyz" }),
@@ -215,24 +216,24 @@ describe("buildCoreHandlers", () => {
 
     it("shouldTrace=false 时不调用 span 方法", () => {
       const handlers = buildCoreHandlers({ tracing: { ignorePaths: ["/health"] } });
-      const state = handlers.onRequestStart(makeCtx({ path: "/health" }));
+      const state = handlers.onRequestStart(makeCtx({ path: "/health" }), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx({ path: "/health" }), 200);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end", path: "/health" }), 200, undefined);
       expect(mockSpan.setAttributes).not.toHaveBeenCalled();
       expect(mockSpan.setStatus).not.toHaveBeenCalled();
     });
 
-    it("lateAttributes 在请求结束阶段可读取 raw 并注入额外属性", () => {
+    it("endAttributes 在请求结束阶段可读取 raw 并注入额外属性", () => {
       const raw = { framework: "koa" };
-      const lateAttributes = vi.fn(() => ({ "tenant.plan": "pro" }));
-      const handlers = buildCoreHandlers({ tracing: { lateAttributes } });
-      const state = handlers.onRequestStart(makeCtx());
+      const endAttributes = vi.fn(() => ({ "tenant.plan": "pro" }));
+      const handlers = buildCoreHandlers({ tracing: { endAttributes } });
+      const state = handlers.onRequestStart(makeCtx(), raw);
       vi.clearAllMocks();
 
-      handlers.onRequestEnd(state, makeCtx({ route: "/users/:id" }), 200, raw);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end", route: "/users/:id" }), 200, raw);
 
-      expect(lateAttributes).toHaveBeenCalledWith(
-        expect.objectContaining({ route: "/users/:id" }),
+      expect(endAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({ phase: "end", route: "/users/:id", statusCode: 200 }),
         raw,
       );
       expect(mockSpan.setAttributes).toHaveBeenCalledWith(
@@ -250,10 +251,10 @@ describe("buildCoreHandlers", () => {
   describe("onRequestError", () => {
     it("Error 对象：recordException + setStatus(ERROR)", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
       const err = new Error("boom");
-      handlers.onRequestError(state, makeCtx(), err);
+      handlers.onRequestError(state, makeCtx({ phase: "end" }), err, undefined);
       expect(mockSpan.recordException).toHaveBeenCalledWith(err);
       expect(mockSpan.setStatus).toHaveBeenCalledWith(
         expect.objectContaining({ code: 2 }),
@@ -262,16 +263,16 @@ describe("buildCoreHandlers", () => {
 
     it("非 Error 对象不崩溃", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      expect(() => handlers.onRequestError(state, makeCtx(), "string error")).not.toThrow();
+      expect(() => handlers.onRequestError(state, makeCtx({ phase: "end" }), "string error", undefined)).not.toThrow();
     });
 
     it("以 statusCode=500 记录指标", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestError(state, makeCtx(), new Error("x"));
+      handlers.onRequestError(state, makeCtx({ phase: "end" }), new Error("x"), undefined);
       expect(mockCounter.add).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ "http.status_code": 500 }),
@@ -280,18 +281,18 @@ describe("buildCoreHandlers", () => {
 
     it("activeRequests.add(-1) 应被调用", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestError(state, makeCtx(), new Error("x"));
+      handlers.onRequestError(state, makeCtx({ phase: "end" }), new Error("x"), undefined);
       expect(mockUpDownCounter.add).toHaveBeenCalledWith(-1, { "http.method": "GET" });
     });
 
     it("异常路径也会写入 http.route 与 http.status_code", () => {
       const handlers = buildCoreHandlers({});
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
 
-      handlers.onRequestError(state, makeCtx({ route: "/orders/:id" }), new Error("x"));
+      handlers.onRequestError(state, makeCtx({ phase: "end", route: "/orders/:id" }), new Error("x"), undefined);
 
       expect(mockSpan.setAttributes).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -304,13 +305,14 @@ describe("buildCoreHandlers", () => {
     it("异常路径也会使用 spanNameResolver 更新 Span 名称", () => {
       const spanNameResolver = vi.fn((ctx) => `${ctx.method} ${ctx.route ?? ctx.path}`);
       const handlers = buildCoreHandlers({ tracing: { spanNameResolver } });
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
 
-      handlers.onRequestError(state, makeCtx({ route: "/orders/:id" }), new Error("x"));
+      handlers.onRequestError(state, makeCtx({ phase: "end", route: "/orders/:id" }), new Error("x"), undefined);
 
       expect(spanNameResolver).toHaveBeenCalledWith(
         expect.objectContaining({ route: "/orders/:id" }),
+        undefined,
       );
       expect(mockSpan.updateName).toHaveBeenCalledWith("GET /orders/:id");
     });
@@ -321,9 +323,9 @@ describe("buildCoreHandlers", () => {
   describe("metrics.enabled=false", () => {
     it("不调用任何指标方法", () => {
       const handlers = buildCoreHandlers({ metrics: { enabled: false } });
-      const state = handlers.onRequestStart(makeCtx());
+      const state = handlers.onRequestStart(makeCtx(), undefined);
       vi.clearAllMocks();
-      handlers.onRequestEnd(state, makeCtx(), 200);
+      handlers.onRequestEnd(state, makeCtx({ phase: "end" }), 200, undefined);
       expect(mockUpDownCounter.add).not.toHaveBeenCalled();
       expect(mockCounter.add).not.toHaveBeenCalled();
       expect(mockHistogram.record).not.toHaveBeenCalled();

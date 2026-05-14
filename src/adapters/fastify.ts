@@ -19,10 +19,10 @@ import type {
 
 import { withSpan } from "../core/span.js";
 import { buildCoreHandlers } from "../core/http-core.js";
-import type { HttpOtelOptions, OtelHttpContext } from "../core/types.js";
+import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 import type { CoreRequestState } from "../core/http-core.js";
 
-export type { OtelHttpContext, HttpOtelOptions };
+export type { HttpObservationContext, HttpOtelOptions };
 
 // ── Fastify Request 类型扩展 ───────────────────────────────────
 declare module "fastify" {
@@ -58,7 +58,7 @@ declare module "fastify" {
  * import { createFastifyPlugin } from "vextjs-opentelemetry/fastify";
  * await fastify.register(createFastifyPlugin({ serviceName: "my-fastify-app" }));
  */
-export function createFastifyPlugin(options: HttpOtelOptions = {}): FastifyPluginAsync {
+export function createFastifyPlugin(options: HttpOtelOptions<{ request: FastifyRequest; reply: FastifyReply }> = {}): FastifyPluginAsync {
   const handlers = buildCoreHandlers(options);
 
   const otelFastifyPlugin = async function (fastify: Parameters<FastifyPluginAsync>[0]) {
@@ -73,14 +73,16 @@ export function createFastifyPlugin(options: HttpOtelOptions = {}): FastifyPlugi
         request.withSpan = withSpan;
       }
       const requestId = request.headers["x-request-id"];
-      const ctx: OtelHttpContext = {
+      const ctx: HttpObservationContext = {
+        phase: "start",
         method: request.method,
         path: request.url.split("?")[0] ?? request.url,
         route: undefined,
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
+        requestSize: request.headers["content-length"] ? parseInt(String(request.headers["content-length"]), 10) : undefined,
       };
-      request._otelState = handlers.onRequestStart(ctx);
+      request._otelState = handlers.onRequestStart(ctx, { request, reply: _reply });
     });
 
     // ── Hook 2: onResponse — 请求成功结束 ─────────────────
@@ -93,12 +95,16 @@ export function createFastifyPlugin(options: HttpOtelOptions = {}): FastifyPlugi
         request.routeOptions?.url ??
         (request as unknown as { routerPath?: string }).routerPath ??
         basePath;
-      const finalCtx: OtelHttpContext = {
+      const responseSize = reply.getHeader("content-length");
+      const finalCtx: HttpObservationContext = {
+        phase: "end",
         method: request.method,
         path: basePath,
         route: routeTemplate,
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
+        requestSize: request.headers["content-length"] ? parseInt(String(request.headers["content-length"]), 10) : undefined,
+        responseSize: responseSize ? parseInt(String(responseSize), 10) : undefined,
       };
       handlers.onRequestEnd(request._otelState, finalCtx, reply.statusCode, { request, reply });
     });
@@ -112,12 +118,16 @@ export function createFastifyPlugin(options: HttpOtelOptions = {}): FastifyPlugi
         request.routeOptions?.url ??
         (request as unknown as { routerPath?: string }).routerPath ??
         basePath;
-      const ctx: OtelHttpContext = {
+      const responseSize = _reply.getHeader("content-length");
+      const ctx: HttpObservationContext = {
+        phase: "end",
         method: request.method,
         path: basePath,
         route: routeTemplate,
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
+        requestSize: request.headers["content-length"] ? parseInt(String(request.headers["content-length"]), 10) : undefined,
+        responseSize: responseSize ? parseInt(String(responseSize), 10) : undefined,
       };
       handlers.onRequestError(request._otelState, ctx, error, { request, reply: _reply });
     });

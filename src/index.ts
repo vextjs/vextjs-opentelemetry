@@ -42,9 +42,12 @@ export type { DeferredState } from "./core/deferred.js";
 
 // ── 类型导出（框架无关）────────────────────────────────────
 export type {
-  OtelHttpContext,
+  HttpObservationContext,
   HttpOtelOptions,
-  OnEndInfo,
+  ObservationAttributeMap,
+  ObservationAttributeResolver,
+  RequestLifecycleInfo,
+  RequestLifecycleHooks,
   OtelConfig,
   ExportMode,
   OtelStatus,

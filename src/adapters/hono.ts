@@ -27,9 +27,9 @@
 import type { MiddlewareHandler, Context as HonoContext } from "hono";
 
 import { buildCoreHandlers } from "../core/http-core.js";
-import type { HttpOtelOptions, OtelHttpContext } from "../core/types.js";
+import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 
-export type { OtelHttpContext, HttpOtelOptions };
+export type { HttpObservationContext, HttpOtelOptions };
 
 /**
  * 创建 Hono 追踪中间件
@@ -41,7 +41,7 @@ export type { OtelHttpContext, HttpOtelOptions };
  * import { createHonoMiddleware } from "vextjs-opentelemetry/hono";
  * app.use(createHonoMiddleware({ serviceName: "my-hono-app" }));
  */
-export function createHonoMiddleware(options: HttpOtelOptions = {}): MiddlewareHandler {
+export function createHonoMiddleware(options: HttpOtelOptions<HonoContext> = {}): MiddlewareHandler {
   const handlers = buildCoreHandlers(options);
 
   return async function otelHonoMiddleware(
@@ -50,7 +50,8 @@ export function createHonoMiddleware(options: HttpOtelOptions = {}): MiddlewareH
   ): Promise<void> {
     const url = new URL(c.req.url);
     const requestId = c.req.header("x-request-id");
-    const otelCtx: OtelHttpContext = {
+    const otelCtx: HttpObservationContext = {
+      phase: "start",
       method: c.req.method,
       path: url.pathname,
       route: undefined, // await next() 之后从 c.req.routePath 获取
@@ -60,20 +61,22 @@ export function createHonoMiddleware(options: HttpOtelOptions = {}): MiddlewareH
       ),
     };
 
-    const state = handlers.onRequestStart(otelCtx);
+    const state = handlers.onRequestStart(otelCtx, c);
 
     try {
       await next();
 
       // Hono 在 next() 之后填充 routePath（路由模板，如 "/users/:id"）
-      const finalCtx: OtelHttpContext = {
+      const finalCtx: HttpObservationContext = {
         ...otelCtx,
+        phase: "end",
         route: c.req.routePath !== "*" ? c.req.routePath : url.pathname,
       };
       handlers.onRequestEnd(state, finalCtx, c.res?.status ?? 200, c);
     } catch (err) {
-      const finalCtx: OtelHttpContext = {
+      const finalCtx: HttpObservationContext = {
         ...otelCtx,
+        phase: "end",
         route: c.req.routePath !== "*" ? c.req.routePath : url.pathname,
       };
       handlers.onRequestError(state, finalCtx, err, c);

@@ -4,25 +4,37 @@
 //
 // ─────────────────────────────────────────────────────────────
 // 原理说明：
-//   Egg.js 的中间件等价于 Koa 中间件（签名完全相同），因此直接
-//   使用 vextjs-opentelemetry/koa 适配器，无需任何适配层。
+//   Egg.js 运行时仍基于 Koa，但库侧已经提供 `vextjs-opentelemetry/egg`
+//   专属适配器与默认 raw ctx 类型，无需消费方再手写 any 标注。
 // ─────────────────────────────────────────────────────────────
 //
-// 前提：SDK 需通过 --import 预加载（与 VextJS 场景完全一致）。
+// 前提：SDK 需通过 --require 预加载（Egg.js / Koa 场景统一使用 initOtel）。
 //
 // package.json 中添加启动命令示例：
 // {
 //   "scripts": {
-//     "start": "node --import vextjs-opentelemetry/instrumentation node_modules/.bin/egg-scripts start",
-//     "dev":   "node --import vextjs-opentelemetry/instrumentation node_modules/.bin/egg-bin dev"
+//     "start": "egg-scripts start --require ./app/otel-init.cjs",
+//     "dev":   "egg-bin dev --require ./app/otel-init.cjs"
 //   }
 // }
 // ─────────────────────────────────────────────────────────────
 
 // 注意：本示例使用相对跨包路径，发布后改为：
 // import { createEggMiddleware } from "vextjs-opentelemetry/egg";
-import { createEggMiddleware } from "../src/adapters/egg.js";
-import type { OtelHttpContext } from "../src/core/types.js";
+import {
+  createEggMiddleware,
+  type EggContextLike,
+} from "../src/adapters/egg.js";
+import type { HttpObservationContext } from "../src/core/types.js";
+
+type AppEggContext = EggContextLike & {
+  user_id?: string;
+  feature_flag?: string;
+  state?: Record<string, unknown> & {
+    userId?: string;
+    user?: { id?: string };
+  };
+};
 
 // ── 步骤 1：创建 Egg.js 中间件文件（app/middleware/otel.ts）──
 
@@ -33,28 +45,46 @@ import type { OtelHttpContext } from "../src/core/types.js";
  *   config.middleware = ["otel"];
  *   config.otel = { serviceName: "my-egg-app" };
  */
-export default createEggMiddleware({
+export default createEggMiddleware<AppEggContext>({
   serviceName: "my-egg-app",
   tracing: {
     // 忽略健康检查路径，不产生追踪数据
     ignorePaths: ["/health", "/ping", "/favicon.ico"],
 
     // 自定义 Span 名称（路由匹配完成后可获取 ctx.route）
-    spanNameResolver: (ctx: OtelHttpContext) =>
+    spanNameResolver: (ctx: HttpObservationContext) =>
       `${ctx.method} ${ctx.route ?? ctx.path}`,
 
-    // 为每个 Span 附加业务维度属性
-    extraAttributes: (ctx: OtelHttpContext) => ({
-      "tenant.id": (ctx.headers["x-tenant-id"] as string) ?? "",
-      "api.version": (ctx.headers["x-api-version"] as string) ?? "v1",
+    // 请求开始阶段附加稳定业务属性
+    startAttributes: (_ctx, rawCtx: AppEggContext) => ({
+      "tenant.id": rawCtx.get("x-tenant-id") || "",
+      "api.version": rawCtx.get("x-api-version") || "v1",
+    }),
+
+    // 请求结束阶段再读取需要完整 raw ctx 的字段
+    endAttributes: (_ctx, rawCtx: AppEggContext) => ({
+      "request.body.present": Boolean(rawCtx.request?.body),
     }),
   },
   metrics: {
     // 自定义指标维度标签
-    customLabels: (ctx: OtelHttpContext) => ({
+    labels: (ctx: HttpObservationContext) => ({
       "app.env": process.env.NODE_ENV ?? "unknown",
       "api.version": (ctx.headers["x-api-version"] as string) ?? "v1",
     }),
+  },
+
+  lifecycle: {
+    onStart: (_ctx, rawCtx: AppEggContext) => {
+      const stateUser = rawCtx.state?.user as { id?: string } | undefined;
+      rawCtx.user_id = (rawCtx.state?.userId as string | undefined) ?? stateUser?.id ?? "";
+      rawCtx.feature_flag = rawCtx.get("x-feature-flag") || "";
+    },
+    onEnd: (ctx, rawCtx: AppEggContext, info) => {
+      rawCtx.logger?.info?.(
+        `${ctx.method} ${rawCtx.status} ${ctx.route ?? ctx.path} ${info.latencyMs}ms`,
+      );
+    },
   },
 });
 
@@ -69,14 +99,16 @@ export default createEggMiddleware({
 //   };
 // };
 
-// ── 步骤 3：SDK 初始化（vextjs-opentelemetry/instrumentation）
+// ── 步骤 3：SDK 初始化（app/otel-init.cjs）
 
-// otel-setup.mjs（在 --import 中指定，或通过 vext.preload 自动加载）：
-//
-// import { setupOpenTelemetry } from "vextjs-opentelemetry/instrumentation";
-// setupOpenTelemetry({
-//   otlpEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "none",
-//   serviceName:  process.env.OTEL_SERVICE_NAME ?? "my-egg-app",
+// "use strict";
+// const { initOtel } = require("vextjs-opentelemetry/koa");
+// initOtel({
+//   serviceName: process.env.OTEL_SERVICE_NAME || "my-egg-app",
+//   endpoint: process.env.OTEL_COLLECTOR_ENDPOINT || "47.89.182.109:32767",
+//   instrumentations: [
+//     // new HttpInstrumentation(),
+//   ],
 // });
 
 // ── 关键说明 ────────────────────────────────────────────────
