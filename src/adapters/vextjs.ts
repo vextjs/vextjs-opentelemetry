@@ -8,14 +8,14 @@
 //   export default opentelemetryPlugin({ serviceName: "my-app" });
 
 import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
-import type { Span, SpanOptions, Attributes } from "@opentelemetry/api";
+import type { Attributes } from "@opentelemetry/api";
 import { definePlugin, defineMiddleware, requestContext } from "vextjs";
-import type { VextRequest, VextApp, VextLogger } from "vextjs";
+import type { VextRequest, VextLogger, VextPluginContext } from "vextjs";
 
 import { withSpan, getOtelStatus, getActiveTraceId, getOtelLogger } from "../core/span.js";
 import { attachExporterToSdk } from "../core/sdk-config.js";
 import { createOtelLogBridge } from "../log.js";
-import type { OtelAppExtension, OtelMetrics, OnEndInfo, OtelStatus } from "../core/types.js";
+import type { OtelAppExtension, OtelMetrics, OnEndInfo } from "../core/types.js";
 import { DEFAULT_SERVICE_NAME } from "../core/types.js";
 
 // ── VextJS 专属配置类型（依赖 VextRequest，不在 core/types 中）──
@@ -61,10 +61,8 @@ export interface OpenTelemetryPluginOptions {
 
   // ── 状态检查接口 ──────────────────────────────────────────────
   /**
-   * @deprecated 路由应由用户在应用代码中自行注册，适配器不再自动注册。
-   * 请在路由文件中调用 app.otel.getStatus()：
-   * @example
-   * app.get("/_otel/status", (req, res) => res.json(req.app.otel!.getStatus()))
+   * 兼容性占位：当前适配器始终自动注册 `GET /_otel/status`。
+   * 不接受自定义路径，保留此字段仅为避免旧配置误传。
    */
   statusEndpoint?: never;
 
@@ -77,7 +75,19 @@ export interface OpenTelemetryPluginOptions {
   // ── Tracing 配置 ──────────────────────────────────────────────
   tracing?: {
     enabled?: boolean;
+    /**
+     * 通用 HTTP 追踪能力（所有框架都支持），VextJS 适配器仅额外提供 req 类型提示。
+     * 适合在请求开始阶段读取已知、低基数的请求字段。
+     */
     extraAttributes?:
+      | Record<string, string | number | boolean>
+      | ((req: VextRequest) => Record<string, string | number | boolean>);
+    /**
+     * 通用 HTTP 追踪能力（所有框架都支持），并非 VextJS 专有。
+     * 与 extraAttributes 的区别仅在于触发时机更晚：此时 route / statusCode 已确定。
+     * VextJS 场景直接传入 req 本身即可读取请求结束态字段，无需额外 raw 参数。
+     */
+    lateAttributes?:
       | Record<string, string | number | boolean>
       | ((req: VextRequest) => Record<string, string | number | boolean>);
     ignorePaths?: (string | RegExp)[];
@@ -176,6 +186,7 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
   }
 
   const customLabelsFn = options.metrics?.customLabels;
+  const lateAttributesFn = options.tracing?.lateAttributes;
 
   function resolveCustomLabels(req: VextRequest): Record<string, string | number | boolean> {
     if (!customLabelsFn) return {};
@@ -183,6 +194,16 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       return typeof customLabelsFn === "function" ? customLabelsFn(req) : customLabelsFn;
     } catch {
       console.warn("[vextjs-opentelemetry] customLabels function threw an error, using defaults");
+      return {};
+    }
+  }
+
+  function resolveLateAttributes(req: VextRequest): Record<string, string | number | boolean> {
+    if (!lateAttributesFn) return {};
+    try {
+      return typeof lateAttributesFn === "function" ? lateAttributesFn(req) : lateAttributesFn;
+    } catch {
+      console.warn("[vextjs-opentelemetry] lateAttributes function threw an error, using defaults");
       return {};
     }
   }
@@ -270,7 +291,12 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       }
 
       if (shouldTrace && activeSpan?.isRecording()) {
+        const late = resolveLateAttributes(req);
         activeSpan.setAttribute("http.status_code", statusCode);
+        activeSpan.setAttribute("http.route", route);
+        if (Object.keys(late).length > 0) {
+          activeSpan.setAttributes(late);
+        }
         if (statusCode >= 400) {
           activeSpan.setStatus({ code: SpanStatusCode.ERROR, message: `HTTP ${statusCode}` });
         }
@@ -284,6 +310,7 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
             route,
             latencyMs: duration,
             statusCode,
+            raw: req,
           } satisfies OnEndInfo);
         } catch (e) {
           console.warn("[vextjs-opentelemetry] onEnd callback threw:", (e as Error).message ?? e);
@@ -306,6 +333,12 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       }
 
       if (shouldTrace && activeSpan?.isRecording()) {
+        const late = resolveLateAttributes(req);
+        activeSpan.setAttribute("http.route", route);
+        activeSpan.setAttribute("http.status_code", 500);
+        if (Object.keys(late).length > 0) {
+          activeSpan.setAttributes(late);
+        }
         activeSpan.setStatus({
           code: SpanStatusCode.ERROR,
           message: (err as Error).message,
@@ -321,6 +354,7 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
             route,
             latencyMs: Math.round(performance.now() - startTime),
             statusCode: 500,
+            raw: req,
           } satisfies OnEndInfo);
         } catch (e) {
           console.warn("[vextjs-opentelemetry] onEnd callback threw:", (e as Error).message ?? e);
@@ -344,7 +378,7 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
  *   logger.error(errorObject, "message")
  */
 function bridgeAppLoggerToOtel(
-  app: VextApp,
+  app: Pick<VextPluginContext, "setLogger">,
   bridge: ReturnType<typeof createOtelLogBridge>,
 ): void {
   app.setLogger((original) => {

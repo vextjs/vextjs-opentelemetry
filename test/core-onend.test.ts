@@ -78,7 +78,8 @@ describe("buildCoreHandlers onEnd 钩子", () => {
         const onEnd = vi.fn();
         const handlers = buildCoreHandlers({ onEnd });
         const state = handlers.onRequestStart(makeCtx());
-        handlers.onRequestEnd(state, makeCtx({ route: "/api/:id" }), 200);
+        const raw = { framework: "koa" };
+        handlers.onRequestEnd(state, makeCtx({ route: "/api/:id" }), 200, raw);
 
         expect(onEnd).toHaveBeenCalledOnce();
         const info = onEnd.mock.calls[0][0] as {
@@ -94,6 +95,7 @@ describe("buildCoreHandlers onEnd 钩子", () => {
         expect(typeof info.latencyMs).toBe("number");
         expect(info.latencyMs).toBeGreaterThanOrEqual(0);
         expect(info.statusCode).toBe(200);
+        expect((info as { raw?: unknown }).raw).toBe(raw);
     });
 
     it("onRequestEnd：route 未定义时回退到 path", () => {
@@ -156,7 +158,8 @@ describe("buildCoreHandlers onEnd 钩子", () => {
         const onEnd = vi.fn();
         const handlers = buildCoreHandlers({ onEnd });
         const state = handlers.onRequestStart(makeCtx());
-        handlers.onRequestError(state, makeCtx({ route: "/api/:id" }), new Error("bad"));
+        const raw = { framework: "express" };
+        handlers.onRequestError(state, makeCtx({ route: "/api/:id" }), new Error("bad"), raw);
 
         expect(onEnd).toHaveBeenCalledOnce();
         const info = onEnd.mock.calls[0][0] as {
@@ -171,6 +174,7 @@ describe("buildCoreHandlers onEnd 钩子", () => {
         expect(info.method).toBe("GET");
         expect(info.route).toBe("/api/:id");
         expect(info.latencyMs).toBeGreaterThanOrEqual(0);
+        expect((info as { raw?: unknown }).raw).toBe(raw);
     });
 
     it("onRequestError：onEnd 未传时不抛错", () => {

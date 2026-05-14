@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { VextLogger, VextPluginContext } from "vextjs";
 
 // ── Hoisted mock instances（必须在 vi.mock 工厂中引用前创建）────────────────
 
@@ -59,7 +60,8 @@ vi.mock("vextjs", () => ({
 
 // ── 被测模块（在 mock 声明之后 import）────────────────────────────────────
 
-import { opentelemetryPlugin } from "../src/adapters/vextjs.js"; import type { OtelAppExtension } from "../src/core/types.js";
+import { opentelemetryPlugin } from "../src/adapters/vextjs.js";
+import type { OtelAppExtension } from "../src/core/types.js";
 // ── 测试工具 ──────────────────────────────────────────────────────────────
 
 interface MockOtelConfig {
@@ -67,23 +69,64 @@ interface MockOtelConfig {
   enabled?: boolean;
 }
 
-function createMockApp(otelConfig?: MockOtelConfig) {
+type MockLogger = VextLogger & {
+  debug: ReturnType<typeof vi.fn>;
+  info: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+  fatal: ReturnType<typeof vi.fn>;
+  child: ReturnType<typeof vi.fn>;
+};
+
+type MockPluginApp = VextPluginContext & {
+  logger: MockLogger;
+  extend: ReturnType<typeof vi.fn>;
+  use: ReturnType<typeof vi.fn>;
+  onClose: ReturnType<typeof vi.fn>;
+  onReady: ReturnType<typeof vi.fn>;
+  setLogger: ReturnType<typeof vi.fn>;
+  adapter: VextPluginContext["adapter"] & {
+    registerRoute: ReturnType<typeof vi.fn>;
+  };
+};
+
+function createMockApp(otelConfig?: MockOtelConfig): MockPluginApp {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    child: vi.fn(() => logger),
+  } as unknown as VextLogger;
+
   return {
-    logger: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    logger,
+    throw: vi.fn(),
     config: {
       otel: otelConfig,
     },
+    services: {},
     extend: vi.fn(),
+    setValidator: vi.fn(),
+    getValidator: vi.fn(),
+    setThrow: vi.fn(),
+    setLogger: vi.fn(),
+    setRateLimiter: vi.fn(),
+    setRequestIdGenerator: vi.fn(),
+    onClose: vi.fn(),
+    onReady: vi.fn(),
     use: vi.fn(),
+    cache: {},
+    fetch: vi.fn(),
     adapter: {
       registerRoute: vi.fn(),
     },
-  };
+  } as unknown as MockPluginApp;
+}
+
+function getMountedOtel(app: MockPluginApp): OtelAppExtension {
+  return app.extend.mock.calls[0][1] as OtelAppExtension;
 }
 
 // ── 测试套件 ──────────────────────────────────────────────────────────────
@@ -116,7 +159,7 @@ describe("opentelemetryPlugin", () => {
     it("options.enabled: false → 不调用 app.extend 和 app.use", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin({ enabled: false }).setup(app as never);
+        await opentelemetryPlugin({ enabled: false }).setup(app);
 
       expect(app.extend).not.toHaveBeenCalled();
       expect(app.use).not.toHaveBeenCalled();
@@ -125,7 +168,7 @@ describe("opentelemetryPlugin", () => {
     it("options.enabled: false → 输出 debug 日志", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin({ enabled: false }).setup(app as never);
+        await opentelemetryPlugin({ enabled: false }).setup(app);
 
       expect(app.logger.debug).toHaveBeenCalledWith(
         expect.stringContaining("disabled"),
@@ -135,7 +178,7 @@ describe("opentelemetryPlugin", () => {
     it("config.otel.enabled: false → 不调用 app.extend 和 app.use", async () => {
       const app = createMockApp({ enabled: false });
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       expect(app.extend).not.toHaveBeenCalled();
       expect(app.use).not.toHaveBeenCalled();
@@ -144,7 +187,7 @@ describe("opentelemetryPlugin", () => {
     it("config.otel.enabled: false → 输出 debug 日志", async () => {
       const app = createMockApp({ enabled: false });
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       expect(app.logger.debug).toHaveBeenCalledWith(
         expect.stringContaining("disabled"),
@@ -154,7 +197,7 @@ describe("opentelemetryPlugin", () => {
     it("options.enabled: false 优先于 config.otel.enabled: true", async () => {
       const app = createMockApp({ enabled: true });
 
-      await opentelemetryPlugin({ enabled: false }).setup(app as never);
+        await opentelemetryPlugin({ enabled: false }).setup(app);
 
       expect(app.extend).not.toHaveBeenCalled();
     });
@@ -162,7 +205,7 @@ describe("opentelemetryPlugin", () => {
     it("disabled 模式不调用 trace.getTracer", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin({ enabled: false }).setup(app as never);
+        await opentelemetryPlugin({ enabled: false }).setup(app);
 
       expect(mockGetTracer).not.toHaveBeenCalled();
     });
@@ -174,7 +217,7 @@ describe("opentelemetryPlugin", () => {
     it("通过 app.extend('otel', ...) 挂载 tracer / meter / metrics", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       expect(app.extend).toHaveBeenCalledOnce();
       expect(app.extend).toHaveBeenCalledWith("otel", expect.objectContaining({
@@ -193,7 +236,7 @@ describe("opentelemetryPlugin", () => {
     it("通过 app.adapter.registerRoute() 注册状态接口 + app.use() 注册追踪中间件", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       // 状态接口通过 adapter.registerRoute 注册
       expect(app.adapter.registerRoute).toHaveBeenCalledOnce();
@@ -209,7 +252,7 @@ describe("opentelemetryPlugin", () => {
     it("输出包含 serviceName 的 info 日志", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin({ serviceName: "my-svc" }).setup(app as never);
+        await opentelemetryPlugin({ serviceName: "my-svc" }).setup(app);
 
       expect(app.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("my-svc"),
@@ -220,7 +263,7 @@ describe("opentelemetryPlugin", () => {
       const app = createMockApp();
 
       await expect(
-        opentelemetryPlugin().setup(app as never),
+          opentelemetryPlugin().setup(app),
       ).resolves.toBeUndefined();
     });
 
@@ -231,7 +274,7 @@ describe("opentelemetryPlugin", () => {
       app.adapter.registerRoute.mockImplementation(() => callOrder.push("registerRoute"));
       app.use.mockImplementation(() => callOrder.push("use"));
 
-      await opentelemetryPlugin().setup(app as never);
+      await opentelemetryPlugin().setup(app);
 
       // extend → registerRoute(status) → use(tracing)
       expect(callOrder).toEqual(["extend", "registerRoute", "use"]);
@@ -244,7 +287,7 @@ describe("opentelemetryPlugin", () => {
     it("创建 http.server.duration 直方图，单位 ms", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       expect(mockMeter.createHistogram).toHaveBeenCalledWith(
         "http.server.duration",
@@ -258,7 +301,7 @@ describe("opentelemetryPlugin", () => {
     it("创建 http.server.request.total 计数器", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       expect(mockMeter.createCounter).toHaveBeenCalledWith(
         "http.server.request.total",
@@ -269,7 +312,7 @@ describe("opentelemetryPlugin", () => {
     it("创建 http.server.active_requests UpDownCounter", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin().setup(app as never);
+      await opentelemetryPlugin().setup(app);
 
       expect(mockMeter.createUpDownCounter).toHaveBeenCalledWith(
         "http.server.active_requests",
@@ -280,7 +323,7 @@ describe("opentelemetryPlugin", () => {
     it("使用默认 durationBuckets", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin().setup(app as never);
+      await opentelemetryPlugin().setup(app);
 
       expect(mockMeter.createHistogram).toHaveBeenCalledWith(
         "http.server.duration",
@@ -300,7 +343,7 @@ describe("opentelemetryPlugin", () => {
 
       await opentelemetryPlugin({
         metrics: { durationBuckets: customBuckets },
-      }).setup(app as never);
+      }).setup(app);
 
       expect(mockMeter.createHistogram).toHaveBeenCalledWith(
         "http.server.duration",
@@ -317,9 +360,7 @@ describe("opentelemetryPlugin", () => {
     it("options.serviceName 优先级最高", async () => {
       const app = createMockApp({ serviceName: "config-service" });
 
-      await opentelemetryPlugin({ serviceName: "options-service" }).setup(
-        app as never,
-      );
+        await opentelemetryPlugin({ serviceName: "options-service" }).setup(app);
 
       expect(mockGetTracer).toHaveBeenCalledWith("options-service");
       expect(mockGetMeter).toHaveBeenCalledWith("options-service");
@@ -328,7 +369,7 @@ describe("opentelemetryPlugin", () => {
     it("config.otel.serviceName 作为第二优先级", async () => {
       const app = createMockApp({ serviceName: "config-service" });
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       expect(mockGetTracer).toHaveBeenCalledWith("config-service");
     });
@@ -336,7 +377,7 @@ describe("opentelemetryPlugin", () => {
     it("无任何配置时默认使用 'vext-app'", async () => {
       const app = createMockApp();
 
-      await opentelemetryPlugin().setup(app as never);
+        await opentelemetryPlugin().setup(app);
 
       expect(mockGetTracer).toHaveBeenCalledWith("vext-app");
     });
@@ -354,9 +395,9 @@ describe("opentelemetryPlugin", () => {
       const app = createMockApp();
       const plugin = opentelemetryPlugin();
 
-      await plugin.setup(app as never);
+        await plugin.setup(app);
       vi.clearAllMocks();
-      await plugin.onClose?.(app as never);
+        await plugin.onClose?.(app);
 
       expect(app.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("flushing"),
@@ -367,8 +408,8 @@ describe("opentelemetryPlugin", () => {
       const app = createMockApp();
       const plugin = opentelemetryPlugin({ enabled: false });
 
-      await plugin.setup(app as never);
-      await expect(plugin.onClose?.(app as never)).resolves.toBeUndefined();
+        await plugin.setup(app);
+        await expect(plugin.onClose?.(app)).resolves.toBeUndefined();
     });
   });
 
@@ -386,8 +427,8 @@ describe("opentelemetryPlugin", () => {
       const app1 = createMockApp();
       const app2 = createMockApp();
 
-      await opentelemetryPlugin({ serviceName: "svc-1" }).setup(app1 as never);
-      await opentelemetryPlugin({ serviceName: "svc-2" }).setup(app2 as never);
+        await opentelemetryPlugin({ serviceName: "svc-1" }).setup(app1);
+        await opentelemetryPlugin({ serviceName: "svc-2" }).setup(app2);
 
       expect(app1.extend).toHaveBeenCalledOnce();
       expect(app2.extend).toHaveBeenCalledOnce();
@@ -409,8 +450,8 @@ describe("opentelemetryPlugin", () => {
 
     it("成功路径：span.end() 自动调用，返回值正确透传", async () => {
       const app = createMockApp();
-      await opentelemetryPlugin().setup(app as never);
-      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+      await opentelemetryPlugin().setup(app);
+      const otel = getMountedOtel(app);
 
       const result = await otel.withSpan("test.op", async () => "ok");
 
@@ -420,8 +461,8 @@ describe("opentelemetryPlugin", () => {
 
     it("异常路径：recordException + setStatus(ERROR) + span.end() + 异常 re-throw", async () => {
       const app = createMockApp();
-      await opentelemetryPlugin().setup(app as never);
-      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+      await opentelemetryPlugin().setup(app);
+      const otel = getMountedOtel(app);
 
       const err = new Error("boom");
       await expect(
@@ -440,8 +481,8 @@ describe("opentelemetryPlugin", () => {
 
     it("带 options.attributes：startActiveSpan 以三参数形式被调用", async () => {
       const app = createMockApp();
-      await opentelemetryPlugin().setup(app as never);
-      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+      await opentelemetryPlugin().setup(app);
+      const otel = getMountedOtel(app);
 
       await otel.withSpan(
         "test.op",
@@ -458,8 +499,8 @@ describe("opentelemetryPlugin", () => {
 
     it("动态属性路径：span 实例正确传入回调，手动 setAttribute 可调用", async () => {
       const app = createMockApp();
-      await opentelemetryPlugin().setup(app as never);
-      const otel = app.extend.mock.calls[0][1] as OtelAppExtension;
+      await opentelemetryPlugin().setup(app);
+      const otel = getMountedOtel(app);
 
       await otel.withSpan("test.op", async (span: import("@opentelemetry/api").Span) => {
         span.setAttribute("payment.id", "pay-123");

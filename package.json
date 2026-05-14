@@ -1,6 +1,6 @@
 {
   "name": "vextjs-opentelemetry",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Framework-agnostic OpenTelemetry SDK wrapper — zero-config traces, metrics, Span API and multi-framework adapters",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -62,10 +62,11 @@
     "build": "tsc -p tsconfig.build.json && node scripts/build-cjs.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "verify": "npm run typecheck && npm test && npm run build",
     "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run verify"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -133,7 +134,7 @@
     "koa": "^3.2.0",
     "prettier": "^3.8.1",
     "typescript": "^5.8.3",
-    "vextjs": "^0.3.2",
+    "vextjs": "^0.3.4",
     "vitest": "^3.1.3"
   }
 }

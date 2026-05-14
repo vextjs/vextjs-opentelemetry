@@ -89,9 +89,14 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
                     route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
                     responseSize: ctx.length,
                 };
-                handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200);
+                handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200, ctx);
             } catch (err) {
-                handlers.onRequestError(state, otelCtx, err);
+                const finalCtx: OtelHttpContext = {
+                    ...otelCtx,
+                    route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
+                    responseSize: ctx.length,
+                };
+                handlers.onRequestError(state, finalCtx, err, ctx);
                 throw err;
             }
             return;
@@ -123,9 +128,14 @@ export function createKoaMiddleware(options: HttpOtelOptions = {}): Middleware {
                     if (finalName !== initialName) {
                         span.updateName(finalName);
                     }
-                    handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200);
+                    handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200, ctx);
                 } catch (err) {
-                    handlers.onRequestError(state, otelCtx, err);
+                    const finalCtx: OtelHttpContext = {
+                        ...otelCtx,
+                        route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
+                        responseSize: ctx.length,
+                    };
+                    handlers.onRequestError(state, finalCtx, err, ctx);
                     throw err;
                 }
             },

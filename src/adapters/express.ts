@@ -82,11 +82,15 @@ export function createExpressMiddleware(options: HttpOtelOptions = {}): RequestH
         ...ctx,
         route: req.route?.path ?? req.path,
       };
-      handlers.onRequestEnd(state, finalCtx, res.statusCode);
+      handlers.onRequestEnd(state, finalCtx, res.statusCode, { req, res });
     });
 
     res.on("error", (err: unknown) => {
-      handlers.onRequestError(state, ctx, err);
+      const finalCtx: OtelHttpContext = {
+        ...ctx,
+        route: req.route?.path ?? req.path,
+      };
+      handlers.onRequestError(state, finalCtx, err, { req, res });
     });
 
     next();

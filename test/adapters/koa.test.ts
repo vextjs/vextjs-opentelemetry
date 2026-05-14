@@ -105,6 +105,33 @@ describe("createKoaMiddleware", () => {
     expect(mockSpan.recordException).toHaveBeenCalledWith(err);
   });
 
+  it("next() 抛出异常时使用 ctx.routerPath 作为路由模板", async () => {
+    const err = new Error("route error");
+    (mockNext as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err);
+    const mw = createKoaMiddleware();
+
+    await expect(mw(makeCtx({ routerPath: "/users/:id" }), mockNext)).rejects.toThrow("route error");
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.route": "/users/:id",
+        "http.status_code": 500,
+      }),
+    );
+  });
+
+  it("next() 抛出异常时 spanNameResolver 也使用 ctx.routerPath 重命名", async () => {
+    const err = new Error("route error");
+    (mockNext as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err);
+    const mw = createKoaMiddleware({
+      tracing: { spanNameResolver: (ctx) => `${ctx.method} ${ctx.route ?? ctx.path}` },
+    });
+
+    await expect(mw(makeCtx({ routerPath: "/users/:id" }), mockNext)).rejects.toThrow("route error");
+
+    expect(mockSpan.updateName).toHaveBeenCalledWith("GET /users/:id");
+  });
+
   it("ignorePaths 匹配时 span 不被标注", async () => {
     const mw = createKoaMiddleware({ tracing: { ignorePaths: ["/health"] } });
     await mw(makeCtx({ path: "/health" }), mockNext);

@@ -118,6 +118,39 @@ describe("createExpressMiddleware", () => {
     expect(mockSpan.recordException).toHaveBeenCalledWith(err);
   });
 
+  it("res.error 时也读取 req.route.path（路由模板）", () => {
+    const mw = createExpressMiddleware();
+    const next = vi.fn();
+    const res = makeRes();
+    const req = makeReq({ route: { path: "/orders/:id" } as never });
+    mw(req, res as Response, next);
+    vi.clearAllMocks();
+
+    res.emit("error", new Error("network"));
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.route": "/orders/:id",
+        "http.status_code": 500,
+      }),
+    );
+  });
+
+  it("res.error 时 spanNameResolver 也使用路由模板重命名", () => {
+    const mw = createExpressMiddleware({
+      tracing: { spanNameResolver: (ctx) => `${ctx.method} ${ctx.route ?? ctx.path}` },
+    });
+    const next = vi.fn();
+    const res = makeRes();
+    const req = makeReq({ route: { path: "/orders/:id" } as never });
+    mw(req, res as Response, next);
+    vi.clearAllMocks();
+
+    res.emit("error", new Error("network"));
+
+    expect(mockSpan.updateName).toHaveBeenCalledWith("GET /orders/:id");
+  });
+
   it("ignorePaths 匹配时 span 不被标注", () => {
     const mw = createExpressMiddleware({ tracing: { ignorePaths: ["/health"] } });
     const next = vi.fn();

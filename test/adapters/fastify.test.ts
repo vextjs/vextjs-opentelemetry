@@ -101,6 +101,23 @@ describe("createFastifyPlugin", () => {
     expect(mockSpan.recordException).toHaveBeenCalled();
   });
 
+  it("路由抛出异常时 spanNameResolver 也会使用路由模板重命名", async () => {
+    const fastify = await buildApp({
+      tracing: {
+        spanNameResolver: (ctx: { method: string; route?: string; path: string }) =>
+          `${ctx.method} ${ctx.route ?? ctx.path}`,
+      },
+    });
+    fastify.get("/boom/:id", async () => {
+      throw new Error("test error");
+    });
+
+    const res = await fastify.inject({ method: "GET", url: "/boom/1" });
+
+    expect(res.statusCode).toBe(500);
+    expect(mockSpan.updateName).toHaveBeenCalledWith("GET /boom/:id");
+  });
+
   it("ignorePaths 匹配时 span 不被标注且指标也不记录", async () => {
     const fastify = await buildApp({ tracing: { ignorePaths: ["/health"] } });
     fastify.get("/health", async () => "ok");

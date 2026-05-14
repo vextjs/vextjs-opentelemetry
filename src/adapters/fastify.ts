@@ -100,7 +100,7 @@ export function createFastifyPlugin(options: HttpOtelOptions = {}): FastifyPlugi
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
       };
-      handlers.onRequestEnd(request._otelState, finalCtx, reply.statusCode);
+      handlers.onRequestEnd(request._otelState, finalCtx, reply.statusCode, { request, reply });
     });
 
     // ── Hook 3: onError — 请求异常结束 ────────────────────
@@ -119,7 +119,7 @@ export function createFastifyPlugin(options: HttpOtelOptions = {}): FastifyPlugi
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
       };
-      handlers.onRequestError(request._otelState, ctx, error);
+      handlers.onRequestError(request._otelState, ctx, error, { request, reply: _reply });
     });
   };
 

@@ -47,6 +47,8 @@ vi.mock("@opentelemetry/api", () => ({
 
 import { createHonoMiddleware } from "../../src/adapters/hono.js";
 
+vi.spyOn(console, "error").mockImplementation(() => {});
+
 // ── 辅助：构建带中间件的 Hono app 并发请求 ─────────────────
 
 async function sendRequest(
@@ -114,6 +116,42 @@ describe("createHonoMiddleware", () => {
     app.get("/users/:id", (c) => c.text("ok"));
     await sendRequest(app, "/users/1");
     expect(mockSpan.updateName).toHaveBeenCalledWith("GET /users/:id");
+  });
+
+  it("路由抛错时仍使用路由模板写入 span", async () => {
+    const app = new Hono();
+    app.use(createHonoMiddleware());
+    app.get("/boom/:id", () => {
+      throw new Error("boom");
+    });
+
+    const res = await sendRequest(app, "/boom/1");
+
+    expect(res.status).toBe(500);
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.route": "/boom/:id",
+        "http.status_code": 500,
+      }),
+    );
+  });
+
+  it("路由抛错时 spanNameResolver 也使用路由模板重命名", async () => {
+    const app = new Hono();
+    app.use(
+      createHonoMiddleware({
+        tracing: { spanNameResolver: (ctx) => `${ctx.method} ${ctx.route ?? ctx.path}` },
+      }),
+    );
+    app.get("/boom/:id", () => {
+      throw new Error("boom");
+    });
+
+    const res = await sendRequest(app, "/boom/1");
+
+    expect(res.status).toBe(500);
+    expect(mockSpan.updateName).toHaveBeenCalledWith("GET /boom/:id");
   });
 
   it("返回值为函数（MiddlewareHandler）", () => {

@@ -49,6 +49,12 @@ export interface OtelHttpContext {
   responseSize?: number;
 }
 
+export type HttpAttributeMap = Record<string, string | number | boolean>;
+
+export type HttpAttributeResolver<TRaw = unknown> =
+  | HttpAttributeMap
+  | ((ctx: OtelHttpContext, raw: TRaw | undefined) => HttpAttributeMap);
+
 // ── HTTP 追踪选项 ─────────────────────────────────────────────
 
 /**
@@ -74,8 +80,13 @@ export interface HttpOtelOptions {
      * ⚠️ 避免高基数字段
      */
     extraAttributes?:
-      | Record<string, string | number | boolean>
-      | ((ctx: OtelHttpContext) => Record<string, string | number | boolean>);
+      | HttpAttributeMap
+      | ((ctx: OtelHttpContext) => HttpAttributeMap);
+    /**
+     * 请求结束阶段额外 Span 属性（route / statusCode 已知，适合读取框架原始上下文）
+     * ⚠️ 避免高基数字段
+     */
+    lateAttributes?: HttpAttributeResolver;
   };
 
   /** 指标配置 */
@@ -133,6 +144,8 @@ export interface OnEndInfo {
   latencyMs: number;
   /** HTTP 响应状态码；异常路径固定为 500 */
   statusCode: number;
+  /** 原始框架请求/上下文对象，供高级场景按需读取 */
+  raw?: unknown;
 }
 
 // ── SDK 配置 ──────────────────────────────────────────────────

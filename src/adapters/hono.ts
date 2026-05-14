@@ -70,9 +70,13 @@ export function createHonoMiddleware(options: HttpOtelOptions = {}): MiddlewareH
         ...otelCtx,
         route: c.req.routePath !== "*" ? c.req.routePath : url.pathname,
       };
-      handlers.onRequestEnd(state, finalCtx, c.res?.status ?? 200);
+      handlers.onRequestEnd(state, finalCtx, c.res?.status ?? 200, c);
     } catch (err) {
-      handlers.onRequestError(state, otelCtx, err);
+      const finalCtx: OtelHttpContext = {
+        ...otelCtx,
+        route: c.req.routePath !== "*" ? c.req.routePath : url.pathname,
+      };
+      handlers.onRequestError(state, finalCtx, err, c);
       throw err;
     }
   };

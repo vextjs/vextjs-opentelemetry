@@ -51,6 +51,8 @@ vi.mock("@opentelemetry/api", () => ({
 import { buildCoreHandlers } from "../src/core/http-core.js";
 import type { OtelHttpContext } from "../src/core/types.js";
 
+vi.spyOn(console, "warn").mockImplementation(() => {});
+
 // ── 测试工具 ──────────────────────────────────────────────────
 
 function makeCtx(overrides: Partial<OtelHttpContext> = {}): OtelHttpContext {
@@ -219,6 +221,28 @@ describe("buildCoreHandlers", () => {
       expect(mockSpan.setAttributes).not.toHaveBeenCalled();
       expect(mockSpan.setStatus).not.toHaveBeenCalled();
     });
+
+    it("lateAttributes 在请求结束阶段可读取 raw 并注入额外属性", () => {
+      const raw = { framework: "koa" };
+      const lateAttributes = vi.fn(() => ({ "tenant.plan": "pro" }));
+      const handlers = buildCoreHandlers({ tracing: { lateAttributes } });
+      const state = handlers.onRequestStart(makeCtx());
+      vi.clearAllMocks();
+
+      handlers.onRequestEnd(state, makeCtx({ route: "/users/:id" }), 200, raw);
+
+      expect(lateAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({ route: "/users/:id" }),
+        raw,
+      );
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "http.route": "/users/:id",
+          "http.status_code": 200,
+          "tenant.plan": "pro",
+        }),
+      );
+    });
   });
 
   // ── onRequestError ─────────────────────────────────────────
@@ -260,6 +284,35 @@ describe("buildCoreHandlers", () => {
       vi.clearAllMocks();
       handlers.onRequestError(state, makeCtx(), new Error("x"));
       expect(mockUpDownCounter.add).toHaveBeenCalledWith(-1, { "http.method": "GET" });
+    });
+
+    it("异常路径也会写入 http.route 与 http.status_code", () => {
+      const handlers = buildCoreHandlers({});
+      const state = handlers.onRequestStart(makeCtx());
+      vi.clearAllMocks();
+
+      handlers.onRequestError(state, makeCtx({ route: "/orders/:id" }), new Error("x"));
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "http.route": "/orders/:id",
+          "http.status_code": 500,
+        }),
+      );
+    });
+
+    it("异常路径也会使用 spanNameResolver 更新 Span 名称", () => {
+      const spanNameResolver = vi.fn((ctx) => `${ctx.method} ${ctx.route ?? ctx.path}`);
+      const handlers = buildCoreHandlers({ tracing: { spanNameResolver } });
+      const state = handlers.onRequestStart(makeCtx());
+      vi.clearAllMocks();
+
+      handlers.onRequestError(state, makeCtx({ route: "/orders/:id" }), new Error("x"));
+
+      expect(spanNameResolver).toHaveBeenCalledWith(
+        expect.objectContaining({ route: "/orders/:id" }),
+      );
+      expect(mockSpan.updateName).toHaveBeenCalledWith("GET /orders/:id");
     });
   });
 

@@ -193,6 +193,14 @@ async function buildCjs() {
       // ── 外部依赖 ────────────────────────────────────────────
       external: externalDeps,
 
+      // ── CJS 兼容性 ───────────────────────────────────────────
+      // koa/egg 适配器源码在 ESM 中使用 createRequire(import.meta.url) 兜底；
+      // CJS bundle 运行时始终命中 __filename 分支，因此这里将 import.meta.url
+      // 直接替换为 undefined，避免 esbuild 对 CJS 输出发出 empty-import-meta warning。
+      define: {
+        "import.meta.url": "undefined",
+      },
+
       // ── 优化选项 ────────────────────────────────────────────
       treeShaking: true,
       keepNames: true,
