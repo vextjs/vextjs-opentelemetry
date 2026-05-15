@@ -55,8 +55,9 @@ async function sendRequest(
   app: Hono,
   path: string,
   method = "GET",
+  init: RequestInit = {},
 ): Promise<Response> {
-  return app.request(`http://localhost${path}`, { method });
+  return app.request(`http://localhost${path}`, { method, ...init });
 }
 
 describe("createHonoMiddleware", () => {
@@ -152,6 +153,37 @@ describe("createHonoMiddleware", () => {
 
     expect(res.status).toBe(500);
     expect(mockSpan.updateName).toHaveBeenCalledWith("GET /boom/:id");
+  });
+
+  it("capture 可从 Hono req 映射 query / params，并仅在 bodyCache 已存在时采集 body", async () => {
+    const app = new Hono();
+    app.use(
+      createHonoMiddleware({
+        capture: {
+          query: true,
+          params: true,
+          body: ["orderNo"],
+        },
+      }),
+    );
+    app.post("/orders/:id", async (c) => {
+      const body = await c.req.json<{ orderNo: string }>();
+      return c.json({ orderNo: body.orderNo });
+    });
+
+    await sendRequest(app, "/orders/42?page=1&tags=a&tags=b", "POST", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orderNo: "A001" }),
+    });
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.request.query.page": "1",
+        "http.request.query.tags": "a,b",
+        "http.request.param.id": "42",
+        "http.request.body.orderNo": "A001",
+      }),
+    );
   });
 
   it("返回值为函数（MiddlewareHandler）", () => {

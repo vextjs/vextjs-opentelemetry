@@ -45,6 +45,12 @@ export interface HttpObservationContext {
   requestId: string | undefined;
   /** 原始请求头（用于 startAttributes / endAttributes / metrics.labels / lifecycle 动态读取） */
   headers: Record<string, string | string[] | undefined>;
+  /** 已归一化的 query 参数，仅保留 string / string[] 值 */
+  query?: Record<string, string | string[] | undefined>;
+  /** 已归一化的路由参数，仅保留 string 值 */
+  params?: Record<string, string | undefined>;
+  /** 已解析的请求体；不同框架可为对象 / FormData / 其他已缓存结果 */
+  body?: unknown;
   /** 请求体大小（bytes），来自 Content-Length 请求头；未提供时为 undefined */
   requestSize?: number;
   /** 响应体大小（bytes），来自 Content-Length 响应头；由适配器在 onRequestEnd 前写入 */
@@ -60,6 +66,38 @@ export type ObservationAttributeMap = Record<string, string | number | boolean>;
 export type ObservationAttributeResolver<TRaw = unknown> =
   | ObservationAttributeMap
   | ((ctx: HttpObservationContext, raw: TRaw) => ObservationAttributeMap);
+
+export interface CaptureFieldRule {
+  /** 实际读取的源字段名；不填时默认等于对象 key */
+  from?: string;
+  /** 是否脱敏；传字符串时作为脱敏后的固定值 */
+  redact?: boolean | string;
+  /** 当前字段独立的最大长度限制；仅对 string 生效 */
+  maxLength?: number;
+}
+
+export type CaptureFieldSelection = string[] | Record<string, CaptureFieldRule>;
+
+/** 显式全量采集开关，仅用于 query / params 这类已归一化集合 */
+export type CaptureAllSelection = true | "*";
+
+/** query / params 允许在白名单之外显式开启全量模式 */
+export type CaptureCollectionSelection = CaptureAllSelection | CaptureFieldSelection;
+
+export interface RequestCaptureOptions<TRaw = unknown> {
+  /** 请求头白名单；在 start 阶段采集 */
+  headers?: CaptureFieldSelection;
+  /** query 参数采集；支持白名单或显式全量模式（true / "*"） */
+  query?: CaptureCollectionSelection;
+  /** 路由参数采集；支持白名单或显式全量模式（true / "*"） */
+  params?: CaptureCollectionSelection;
+  /** body 字段白名单；在 end 阶段采集，且仅消费已解析 body */
+  body?: CaptureFieldSelection;
+  /** 敏感字段命中规则；命中后默认写入 [REDACTED] */
+  sensitiveKeys?: (string | RegExp)[];
+  /** 全局字符串截断长度，默认 256 */
+  maxValueLength?: number;
+}
 
 export interface RequestLifecycleInfo {
   /** 十六进制 Trace ID（32 位小写），无活跃 Span 时为空字符串 */
@@ -129,6 +167,9 @@ export interface HttpOtelOptions<TRaw = unknown> {
 
   /** 请求生命周期回调（成功或异常均触发） */
   lifecycle?: RequestLifecycleHooks<TRaw>;
+
+  /** 常见请求字段的声明式采集配置 */
+  capture?: RequestCaptureOptions<TRaw>;
 
   /** Logs 配置 */
   logs?: {

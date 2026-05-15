@@ -78,6 +78,9 @@ function createMockReq(overrides: Record<string, unknown> = {}) {
     route: "/test/:id",
     requestId: "req-001",
     headers: {} as Record<string, string>,
+    query: { page: "1" },
+    params: { id: "42" },
+    body: { orderNo: "A001" },
     ...overrides,
   };
 }
@@ -902,6 +905,37 @@ describe("createTracingMiddleware", () => {
       await (middleware as Function)(req, res, async () => {});
 
       expect(mockSpan.updateName).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("capture", () => {
+    it("支持 query/params 显式全量模式，并采集 body 白名单字段", async () => {
+      const middleware = createTracingMiddleware(createMockMetrics(), {
+        capture: {
+          query: true,
+          params: true,
+          body: ["orderNo"],
+        },
+      });
+      const req = createMockReq({
+        query: { page: "1", tags: ["a", "b"] },
+        params: { id: "42", tenantId: "t-1" },
+        body: { orderNo: "A001" },
+        route: "/orders/:id",
+      });
+      const res = createMockRes(200);
+
+      await (middleware as Function)(req, res, async () => {});
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "http.request.query.page": "1",
+          "http.request.query.tags": "a,b",
+          "http.request.param.id": "42",
+          "http.request.param.tenantId": "t-1",
+          "http.request.body.orderNo": "A001",
+        }),
+      );
     });
   });
 });

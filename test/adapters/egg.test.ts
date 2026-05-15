@@ -30,6 +30,9 @@ interface EggTestContext {
   method: string;
   path: string;
   routerPath?: string;
+   query?: Record<string, unknown>;
+   params?: Record<string, unknown>;
+   request?: { body?: unknown };
   tracer: EggTestTracer;
   get(name: string): string;
   user_id?: string;
@@ -54,6 +57,9 @@ describe("createEggMiddleware", () => {
       method: "GET",
       path: "/users/1",
       routerPath: "/users/:id",
+      query: { page: "1" },
+      params: { id: "1" },
+      request: { body: { orderNo: "A001" } },
       tracer: {},
       get: () => "",
     };
@@ -73,6 +79,9 @@ describe("createEggMiddleware", () => {
     const ctx: EggTestContext = {
       method: "POST",
       path: "/orders",
+      query: { page: "1" },
+      params: { id: "42" },
+      request: { body: { orderNo: "A001" } },
       tracer: {},
       get: () => "",
     };
@@ -92,6 +101,8 @@ describe("createEggMiddleware", () => {
         endAttributes: (_ctx, rawCtx) => {
           expectTypeOf(rawCtx).toMatchTypeOf<EggContextLike>();
           expectTypeOf(rawCtx.get).toBeFunction();
+          expectTypeOf(rawCtx.query).toMatchTypeOf<Record<string, unknown> | undefined>();
+          expectTypeOf(rawCtx.params).toMatchTypeOf<Record<string, unknown> | undefined>();
           return {
             "request.body.present": Boolean(rawCtx.request?.body),
           };
@@ -103,6 +114,36 @@ describe("createEggMiddleware", () => {
         },
       },
     });
+  });
+
+  it("委托给 Koa middleware 时保留 query / params / body 等晚到字段", async () => {
+    const middleware = createEggMiddleware({})({}, {});
+    const ctx: EggTestContext = {
+      method: "POST",
+      path: "/orders/99",
+      tracer: {},
+      get: () => "",
+    };
+
+    mockKoaMiddleware.mockImplementationOnce(async (rawCtx, next) => {
+      (rawCtx as EggTestContext).query = { page: "1" };
+      (rawCtx as EggTestContext).params = { id: "99" };
+      (rawCtx as EggTestContext).request = { body: { orderNo: "LATE-001" } };
+      (rawCtx as EggTestContext).routerPath = "/orders/:id";
+      await next();
+    });
+
+    await middleware(ctx, vi.fn(async () => undefined));
+
+    expect(mockKoaMiddleware).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: { page: "1" },
+        params: { id: "99" },
+        request: { body: { orderNo: "LATE-001" } },
+        routerPath: "/orders/:id",
+      }),
+      expect.any(Function),
+    );
   });
 });
 

@@ -147,4 +147,30 @@ describe("createFastifyPlugin", () => {
       expect.objectContaining({ "http.method": "POST", "http.status_code": 200 }),
     );
   });
+
+  it("capture 可从 Fastify request 映射 query / params / body", async () => {
+    const fastify = await buildApp({
+      capture: {
+        query: true,
+        params: true,
+        body: ["orderNo"],
+      },
+    });
+    fastify.post("/orders/:id", async () => ({ ok: true }));
+
+    await fastify.inject({
+      method: "POST",
+      url: "/orders/42?page=1&tags=a&tags=b",
+      payload: { orderNo: "A001" },
+    });
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.request.query.page": "1",
+        "http.request.query.tags": "a,b",
+        "http.request.param.id": "42",
+        "http.request.body.orderNo": "A001",
+      }),
+    );
+  });
 });

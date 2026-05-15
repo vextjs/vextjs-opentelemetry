@@ -18,7 +18,7 @@ import type { Middleware, Context, Next } from "koa";
 import { createRequire } from "node:module";
 
 import { withSpan } from "../core/span.js";
-import { buildCoreHandlers } from "../core/http-core.js";
+import { buildCoreHandlers, normalizeParamsRecord, normalizeQueryRecord } from "../core/http-core.js";
 import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 
 export type { HttpObservationContext, HttpOtelOptions };
@@ -62,12 +62,40 @@ export function createKoaMiddleware(options: HttpOtelOptions<Context> = {}): Mid
         );
     }
 
+    function buildFinalContext(
+        observedCtx: Context & {
+            routerPath?: string;
+            query?: unknown;
+            params?: unknown;
+            request?: Context["request"] & { body?: unknown; length?: number };
+        },
+        baseCtx: HttpObservationContext,
+        ctx: Context,
+    ): HttpObservationContext {
+        return {
+            ...baseCtx,
+            phase: "end",
+            route: observedCtx.routerPath ?? ctx.path,
+            query: normalizeQueryRecord(observedCtx.query),
+            params: normalizeParamsRecord(observedCtx.params),
+            body: observedCtx.request?.body,
+            requestSize: observedCtx.request?.length,
+            responseSize: ctx.length,
+        };
+    }
+
     return async function otelKoaMiddleware(ctx: Context, next: Next): Promise<void> {
         // 默认注入（保底）：框架可在后续中间件中覆盖 ctx.withSpan 实现扩展
         if (!ctx.withSpan) {
             ctx.withSpan = withSpan;
         }
 
+        const observedCtx = ctx as Context & {
+            routerPath?: string;
+            query?: unknown;
+            params?: unknown;
+            request?: Context["request"] & { body?: unknown; length?: number };
+        };
         const requestId = ctx.get("x-request-id") || undefined;
         const observationCtx: HttpObservationContext = {
             phase: "start",
@@ -76,6 +104,9 @@ export function createKoaMiddleware(options: HttpOtelOptions<Context> = {}): Mid
             route: undefined, // 路由匹配在 await next() 之后完成
             requestId,
             headers: ctx.headers as Record<string, string | string[] | undefined>,
+            query: normalizeQueryRecord(observedCtx.query),
+            params: normalizeParamsRecord(observedCtx.params),
+            body: observedCtx.request?.body,
             requestSize: ctx.request?.length,
         };
 
@@ -85,20 +116,10 @@ export function createKoaMiddleware(options: HttpOtelOptions<Context> = {}): Mid
             const state = handlers.onRequestStart(observationCtx, ctx);
             try {
                 await next();
-                const finalCtx: HttpObservationContext = {
-                    ...observationCtx,
-                    phase: "end",
-                    route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
-                    responseSize: ctx.length,
-                };
+                const finalCtx = buildFinalContext(observedCtx, observationCtx, ctx);
                 handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200, ctx);
             } catch (err) {
-                const finalCtx: HttpObservationContext = {
-                    ...observationCtx,
-                    phase: "end",
-                    route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
-                    responseSize: ctx.length,
-                };
+                const finalCtx = buildFinalContext(observedCtx, observationCtx, ctx);
                 handlers.onRequestError(state, finalCtx, err, ctx);
                 throw err;
             }
@@ -121,9 +142,8 @@ export function createKoaMiddleware(options: HttpOtelOptions<Context> = {}): Mid
                 try {
                     await next();
 
-                    const routerPath =
-                        (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path;
-                    const finalCtx: HttpObservationContext = { ...observationCtx, phase: "end", route: routerPath, responseSize: ctx.length };
+                    const finalCtx = buildFinalContext(observedCtx, observationCtx, ctx);
+                    const routerPath = finalCtx.route ?? ctx.path;
                     // 路由匹配完成后，用正确的路由模板更新 span 名
                     const finalName = spanResolver
                         ? spanResolver(finalCtx, ctx)
@@ -133,12 +153,7 @@ export function createKoaMiddleware(options: HttpOtelOptions<Context> = {}): Mid
                     }
                     handlers.onRequestEnd(state, finalCtx, ctx.status ?? 200, ctx);
                 } catch (err) {
-                    const finalCtx: HttpObservationContext = {
-                        ...observationCtx,
-                        phase: "end",
-                        route: (ctx as Context & { routerPath?: string }).routerPath ?? ctx.path,
-                        responseSize: ctx.length,
-                    };
+                    const finalCtx = buildFinalContext(observedCtx, observationCtx, ctx);
                     handlers.onRequestError(state, finalCtx, err, ctx);
                     throw err;
                 }

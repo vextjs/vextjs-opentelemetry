@@ -49,13 +49,23 @@ import { createKoaMiddleware } from "../../src/adapters/koa.js";
 
 // ── 工具：模拟 Koa ctx ──────────────────────────────────────
 
-function makeCtx(overrides: Partial<Context & { routerPath?: string }> = {}): Context {
+function makeCtx(
+  overrides: Partial<Context & {
+    routerPath?: string;
+    query?: unknown;
+    params?: unknown;
+    request?: Context["request"] & { body?: unknown; length?: number };
+  }> = {},
+): Context {
   return {
     method: "GET",
     path: "/test",
     url: "/test",
     status: 200,
     headers: { "x-request-id": "req-001" } as Record<string, string>,
+    query: { page: "1" },
+    params: { id: "42" },
+    request: { body: { orderNo: "A001" }, length: 16 },
     get: (key: string) => (key === "x-request-id" ? "req-001" : ""),
     routerPath: undefined,
     ...overrides,
@@ -145,6 +155,54 @@ describe("createKoaMiddleware", () => {
     const mw = createKoaMiddleware({ tracing: { spanNameResolver: resolver } });
     await mw(makeCtx(), mockNext);
     expect(mockSpan.updateName).toHaveBeenCalledWith("GET /resolved");
+  });
+
+  it("capture 可从 Koa ctx 映射 query / params / body", async () => {
+    const mw = createKoaMiddleware({
+      capture: {
+        query: true,
+        params: true,
+        body: ["orderNo"],
+      },
+    });
+
+    await mw(makeCtx({ routerPath: "/orders/:id" }), mockNext);
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.request.query.page": "1",
+        "http.request.param.id": "42",
+        "http.request.body.orderNo": "A001",
+      }),
+    );
+  });
+
+  it("capture 在 Koa 中可读取 next() 之后才出现的 params / body", async () => {
+    const mw = createKoaMiddleware({
+      capture: {
+        params: true,
+        body: ["orderNo"],
+      },
+    });
+    const ctx = makeCtx({
+      params: undefined,
+      request: { body: undefined, length: 16 } as Context["request"] & { body?: unknown; length?: number },
+      routerPath: undefined,
+    });
+    const next = vi.fn(async () => {
+      (ctx as unknown as { params?: Record<string, string> }).params = { id: "99" };
+      (ctx as unknown as { request: { body?: unknown; length?: number } }).request.body = { orderNo: "LATE-001" };
+      (ctx as unknown as { routerPath?: string }).routerPath = "/orders/:id";
+    });
+
+    await mw(ctx, next);
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.request.param.id": "99",
+        "http.request.body.orderNo": "LATE-001",
+      }),
+    );
   });
 
   it("返回值为异步函数（Middleware）", () => {

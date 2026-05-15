@@ -18,7 +18,7 @@ import type {
 } from "fastify";
 
 import { withSpan } from "../core/span.js";
-import { buildCoreHandlers } from "../core/http-core.js";
+import { buildCoreHandlers, normalizeParamsRecord, normalizeQueryRecord } from "../core/http-core.js";
 import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 import type { CoreRequestState } from "../core/http-core.js";
 
@@ -80,6 +80,9 @@ export function createFastifyPlugin(options: HttpOtelOptions<{ request: FastifyR
         route: undefined,
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
+        query: normalizeQueryRecord(request.query),
+        params: normalizeParamsRecord(request.params),
+        body: request.body,
         requestSize: request.headers["content-length"] ? parseInt(String(request.headers["content-length"]), 10) : undefined,
       };
       request._otelState = handlers.onRequestStart(ctx, { request, reply: _reply });
@@ -103,6 +106,9 @@ export function createFastifyPlugin(options: HttpOtelOptions<{ request: FastifyR
         route: routeTemplate,
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
+        query: normalizeQueryRecord(request.query),
+        params: normalizeParamsRecord(request.params),
+        body: request.body,
         requestSize: request.headers["content-length"] ? parseInt(String(request.headers["content-length"]), 10) : undefined,
         responseSize: responseSize ? parseInt(String(responseSize), 10) : undefined,
       };
@@ -126,6 +132,9 @@ export function createFastifyPlugin(options: HttpOtelOptions<{ request: FastifyR
         route: routeTemplate,
         requestId: Array.isArray(requestId) ? requestId[0] : requestId,
         headers: request.headers as Record<string, string | string[] | undefined>,
+        query: normalizeQueryRecord(request.query),
+        params: normalizeParamsRecord(request.params),
+        body: request.body,
         requestSize: request.headers["content-length"] ? parseInt(String(request.headers["content-length"]), 10) : undefined,
         responseSize: responseSize ? parseInt(String(responseSize), 10) : undefined,
       };

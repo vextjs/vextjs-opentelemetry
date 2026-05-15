@@ -77,6 +77,8 @@ export interface EggContextLike {
   status?: number;
   routerPath?: string;
   headers?: Record<string, string | string[] | undefined>;
+  query?: Record<string, unknown>;
+  params?: Record<string, unknown>;
   state?: Record<string, unknown>;
   request?: EggRequestLike;
   logger?: EggLoggerLike;

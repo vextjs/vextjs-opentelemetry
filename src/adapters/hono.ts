@@ -26,10 +26,42 @@
 
 import type { MiddlewareHandler, Context as HonoContext } from "hono";
 
-import { buildCoreHandlers } from "../core/http-core.js";
+import { buildCoreHandlers, normalizeParamsRecord, normalizeQueryRecord } from "../core/http-core.js";
 import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 
 export type { HttpObservationContext, HttpOtelOptions };
+
+async function getCachedHonoBody(c: HonoContext): Promise<unknown> {
+  const bodyCache = (c.req as HonoContext["req"] & {
+    bodyCache?: Partial<{
+      formData: Promise<FormData>;
+      text: Promise<string>;
+      arrayBuffer: Promise<ArrayBuffer>;
+      blob: Promise<Blob>;
+    }>;
+  }).bodyCache;
+
+  if (!bodyCache) return undefined;
+
+  if (bodyCache.formData !== undefined) {
+    return bodyCache.formData;
+  }
+
+  if (bodyCache.text !== undefined) {
+    const text = await bodyCache.text;
+    const contentType = c.req.header("content-type") ?? "";
+    if (contentType.toLowerCase().includes("application/json")) {
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        return undefined;
+      }
+    }
+    return text;
+  }
+
+  return undefined;
+}
 
 /**
  * 创建 Hono 追踪中间件
@@ -50,6 +82,11 @@ export function createHonoMiddleware(options: HttpOtelOptions<HonoContext> = {})
   ): Promise<void> {
     const url = new URL(c.req.url);
     const requestId = c.req.header("x-request-id");
+    const query = normalizeQueryRecord({
+      ...c.req.query(),
+      ...c.req.queries(),
+    });
+    const params = normalizeParamsRecord(c.req.param());
     const otelCtx: HttpObservationContext = {
       phase: "start",
       method: c.req.method,
@@ -59,6 +96,8 @@ export function createHonoMiddleware(options: HttpOtelOptions<HonoContext> = {})
       headers: Object.fromEntries(
         [...new Headers(c.req.raw.headers).entries()].map(([k, v]) => [k, v]),
       ),
+      query,
+      params,
     };
 
     const state = handlers.onRequestStart(otelCtx, c);
@@ -71,6 +110,8 @@ export function createHonoMiddleware(options: HttpOtelOptions<HonoContext> = {})
         ...otelCtx,
         phase: "end",
         route: c.req.routePath !== "*" ? c.req.routePath : url.pathname,
+        params: normalizeParamsRecord(c.req.param()),
+        body: await getCachedHonoBody(c),
       };
       handlers.onRequestEnd(state, finalCtx, c.res?.status ?? 200, c);
     } catch (err) {
@@ -78,6 +119,8 @@ export function createHonoMiddleware(options: HttpOtelOptions<HonoContext> = {})
         ...otelCtx,
         phase: "end",
         route: c.req.routePath !== "*" ? c.req.routePath : url.pathname,
+        params: normalizeParamsRecord(c.req.param()),
+        body: await getCachedHonoBody(c),
       };
       handlers.onRequestError(state, finalCtx, err, c);
       throw err;

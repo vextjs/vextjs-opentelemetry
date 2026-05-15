@@ -17,7 +17,7 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 
 import { withSpan } from "../core/span.js";
-import { buildCoreHandlers } from "../core/http-core.js";
+import { buildCoreHandlers, normalizeParamsRecord, normalizeQueryRecord } from "../core/http-core.js";
 import type { HttpOtelOptions, HttpObservationContext } from "../core/types.js";
 
 export type { HttpObservationContext, HttpOtelOptions };
@@ -73,6 +73,9 @@ export function createExpressMiddleware(options: HttpOtelOptions<{ req: Request;
       route: undefined, // 全局中间件阶段，route 尚未匹配
       requestId: Array.isArray(requestId) ? requestId[0] : requestId,
       headers: req.headers as Record<string, string | string[] | undefined>,
+      query: normalizeQueryRecord(req.query),
+      params: normalizeParamsRecord(req.params),
+      body: req.body,
       requestSize: req.headers["content-length"] ? parseInt(String(req.headers["content-length"]), 10) : undefined,
     };
 

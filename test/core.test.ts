@@ -144,6 +144,20 @@ describe("buildCoreHandlers", () => {
       });
       expect(() => handlers.onRequestStart(makeCtx(), undefined)).not.toThrow();
     });
+
+    it("capture.headers 在 start 阶段注入请求头属性", () => {
+      const handlers = buildCoreHandlers({
+        capture: { headers: ["x-tenant-id"] },
+      });
+
+      handlers.onRequestStart(makeCtx({ headers: { "x-tenant-id": "tenant-a" } }), undefined);
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "http.request.header.x-tenant-id": "tenant-a",
+        }),
+      );
+    });
   });
 
   // ── onRequestEnd ───────────────────────────────────────────
@@ -241,6 +255,103 @@ describe("buildCoreHandlers", () => {
           "http.route": "/users/:id",
           "http.status_code": 200,
           "tenant.plan": "pro",
+        }),
+      );
+    });
+
+    it("capture.query/query=true 与 capture.params/params=true 支持显式全量采集", () => {
+      const handlers = buildCoreHandlers({
+        capture: {
+          query: true,
+          params: true,
+        },
+      });
+      const state = handlers.onRequestStart(makeCtx(), undefined);
+      vi.clearAllMocks();
+
+      handlers.onRequestEnd(
+        state,
+        makeCtx({
+          phase: "end",
+          route: "/orders/:id",
+          query: { page: "1", tags: ["a", "b"] },
+          params: { id: "42", tenantId: "t-1" },
+        }),
+        200,
+        undefined,
+      );
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "http.request.query.page": "1",
+          "http.request.query.tags": "a,b",
+          "http.request.param.id": "42",
+          "http.request.param.tenantId": "t-1",
+        }),
+      );
+    });
+
+    it("capture.body 支持点路径、脱敏、截断，并跳过非标量值", () => {
+      const handlers = buildCoreHandlers({
+        capture: {
+          body: {
+            orderNo: {},
+            customerId: { from: "customer.id" },
+            authToken: { from: "token", redact: true },
+            summary: { maxLength: 4 },
+            wholeCustomer: { from: "customer" },
+          },
+        },
+      });
+      const state = handlers.onRequestStart(makeCtx(), undefined);
+      vi.clearAllMocks();
+
+      handlers.onRequestEnd(
+        state,
+        makeCtx({
+          phase: "end",
+          route: "/orders/:id",
+          body: {
+            orderNo: "A001",
+            customer: { id: "U1001" },
+            token: "secret-token",
+            summary: "abcdef",
+          },
+        }),
+        200,
+        undefined,
+      );
+
+      const attrs = mockSpan.setAttributes.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(attrs).toMatchObject({
+        "http.request.body.orderNo": "A001",
+        "http.request.body.customerId": "U1001",
+        "http.request.body.authToken": "[REDACTED]",
+        "http.request.body.summary": "abcd",
+      });
+      expect(attrs["http.request.body.wholeCustomer"]).toBeUndefined();
+    });
+
+    it("用户 endAttributes 与 capture 同名时，用户 resolver 保留最终覆盖权", () => {
+      const handlers = buildCoreHandlers({
+        capture: { query: true },
+        tracing: {
+          endAttributes: () => ({ "http.request.query.page": "99" }),
+        },
+      });
+      const state = handlers.onRequestStart(makeCtx(), undefined);
+      vi.clearAllMocks();
+
+      handlers.onRequestEnd(
+        state,
+        makeCtx({ phase: "end", query: { page: "1" } }),
+        200,
+        undefined,
+      );
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "http.request.query.page": "99",
         }),
       );
     });

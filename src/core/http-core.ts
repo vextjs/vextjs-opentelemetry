@@ -12,10 +12,14 @@
 import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
 import type { Span } from "@opentelemetry/api";
 import type {
+  CaptureCollectionSelection,
+  CaptureFieldRule,
+  CaptureFieldSelection,
   HttpObservationContext,
   HttpOtelOptions,
   ObservationAttributeMap,
   ObservationAttributeResolver,
+  RequestCaptureOptions,
   RequestLifecycleInfo,
 } from "./types.js";
 
@@ -33,6 +37,19 @@ const METRIC_TOTAL     = "http.server.request.total";
 const METRIC_ACTIVE    = "http.server.active_requests";
 const METRIC_REQ_SIZE  = "http.server.request.size";
 const METRIC_RESP_SIZE = "http.server.response.size";
+
+const DEFAULT_CAPTURE_MAX_VALUE_LENGTH = 256;
+const REDACTED_VALUE = "[REDACTED]";
+const DEFAULT_SENSITIVE_KEYS: (string | RegExp)[] = [
+  /authorization/i,
+  /cookie/i,
+  /token/i,
+  /secret/i,
+  /password/i,
+  /passwd/i,
+  /pwd/i,
+  /session/i,
+];
 
 // ── 公开类型 ─────────────────────────────────────────────────
 
@@ -82,6 +99,261 @@ export interface CoreHandlers {
   onRequestError(state: CoreRequestState, ctx: HttpObservationContext, err: unknown, raw: unknown): void;
 }
 
+interface NormalizedCaptureField {
+  attributeKey: string;
+  sourceKey: string;
+  rule: CaptureFieldRule;
+}
+
+interface NormalizedCaptureSelection {
+  all: boolean;
+  fields: NormalizedCaptureField[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isCaptureAllSelection(selection: CaptureCollectionSelection | undefined): selection is true | "*" {
+  return selection === true || selection === "*";
+}
+
+function matchesSensitiveKey(
+  attributeKey: string,
+  sourceKey: string,
+  patterns: (string | RegExp)[],
+): boolean {
+  const candidates = [
+    attributeKey,
+    sourceKey,
+    attributeKey.split(".").pop() ?? attributeKey,
+    sourceKey.split(".").pop() ?? sourceKey,
+  ];
+  return patterns.some((pattern) =>
+    candidates.some((candidate) =>
+      typeof pattern === "string"
+        ? candidate.toLowerCase() === pattern.toLowerCase()
+        : pattern.test(candidate),
+    ),
+  );
+}
+
+function getValueByPath(source: unknown, sourcePath: string): unknown {
+  if (!sourcePath) return undefined;
+
+  if (typeof FormData !== "undefined" && source instanceof FormData) {
+    const entry = source.get(sourcePath);
+    return typeof entry === "string" ? entry : undefined;
+  }
+
+  if (!isRecord(source)) return undefined;
+
+  const segments = sourcePath.split(".").filter(Boolean);
+  let current: unknown = source;
+  for (const segment of segments) {
+    if (!isRecord(current) || !(segment in current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function toAttributeValue(
+  value: unknown,
+  attributeKey: string,
+  sourceKey: string,
+  rule: CaptureFieldRule,
+  capture: RequestCaptureOptions<unknown>,
+): string | number | boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  const sensitiveKeys = capture.sensitiveKeys ?? DEFAULT_SENSITIVE_KEYS;
+  if (rule.redact !== undefined || matchesSensitiveKey(attributeKey, sourceKey, sensitiveKeys)) {
+    if (typeof rule.redact === "string") return rule.redact;
+    return REDACTED_VALUE;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.every((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean")) {
+      value = value.map((item) => String(item)).join(",");
+    } else {
+      return undefined;
+    }
+  }
+
+  if (typeof value === "string") {
+    const maxLength = rule.maxLength ?? capture.maxValueLength ?? DEFAULT_CAPTURE_MAX_VALUE_LENGTH;
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  return undefined;
+}
+
+export function normalizeCaptureSelection(
+  selection: CaptureFieldSelection | CaptureCollectionSelection | undefined,
+): NormalizedCaptureSelection {
+  if (!selection) {
+    return { all: false, fields: [] };
+  }
+  if (isCaptureAllSelection(selection)) {
+    return { all: true, fields: [] };
+  }
+  if (Array.isArray(selection)) {
+    return {
+      all: false,
+      fields: selection.map((key) => ({ attributeKey: key, sourceKey: key, rule: {} })),
+    };
+  }
+  return {
+    all: false,
+    fields: Object.entries(selection).map(([attributeKey, rule]) => ({
+      attributeKey,
+      sourceKey: rule.from ?? attributeKey,
+      rule,
+    })),
+  };
+}
+
+export function normalizeQueryRecord(
+  value: unknown,
+): Record<string, string | string[] | undefined> | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const normalized: Record<string, string | string[] | undefined> = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (typeof rawValue === "string") {
+      normalized[key] = rawValue;
+      continue;
+    }
+    if (typeof rawValue === "number" || typeof rawValue === "boolean") {
+      normalized[key] = String(rawValue);
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      const scalarArray = rawValue.filter(
+        (item): item is string | number | boolean =>
+          typeof item === "string" || typeof item === "number" || typeof item === "boolean",
+      );
+      if (scalarArray.length > 0 && scalarArray.length === rawValue.length) {
+        normalized[key] = scalarArray.map((item) => String(item));
+      }
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+export function normalizeParamsRecord(
+  value: unknown,
+): Record<string, string | undefined> | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const normalized: Record<string, string | undefined> = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (typeof rawValue === "string") {
+      normalized[key] = rawValue;
+      continue;
+    }
+    if (typeof rawValue === "number" || typeof rawValue === "boolean") {
+      normalized[key] = String(rawValue);
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function resolveSelectionAttributes(
+  prefix: string,
+  selection: CaptureFieldSelection | CaptureCollectionSelection | undefined,
+  source: Record<string, unknown> | undefined,
+  capture: RequestCaptureOptions<unknown>,
+): ObservationAttributeMap {
+  if (!selection || !source) return {};
+
+  const normalized = normalizeCaptureSelection(selection);
+  const attributes: ObservationAttributeMap = {};
+
+  if (normalized.all) {
+    for (const [key, rawValue] of Object.entries(source)) {
+      const attributeValue = toAttributeValue(rawValue, key, key, {}, capture);
+      if (attributeValue !== undefined) {
+        attributes[`${prefix}${key}`] = attributeValue;
+      }
+    }
+    return attributes;
+  }
+
+  for (const field of normalized.fields) {
+    const rawValue = source[field.sourceKey];
+    const attributeValue = toAttributeValue(rawValue, field.attributeKey, field.sourceKey, field.rule, capture);
+    if (attributeValue !== undefined) {
+      attributes[`${prefix}${field.attributeKey}`] = attributeValue;
+    }
+  }
+
+  return attributes;
+}
+
+function resolveBodyAttributes(
+  selection: CaptureFieldSelection | undefined,
+  body: unknown,
+  capture: RequestCaptureOptions<unknown>,
+): ObservationAttributeMap {
+  if (!selection || body === undefined) return {};
+
+  const normalized = normalizeCaptureSelection(selection);
+  const attributes: ObservationAttributeMap = {};
+  for (const field of normalized.fields) {
+    const rawValue = getValueByPath(body, field.sourceKey);
+    const attributeValue = toAttributeValue(
+      rawValue,
+      field.attributeKey,
+      field.sourceKey,
+      field.rule,
+      capture,
+    );
+    if (attributeValue !== undefined) {
+      attributes[`http.request.body.${field.attributeKey}`] = attributeValue;
+    }
+  }
+  return attributes;
+}
+
+export function resolveCapturedAttributes(
+  ctx: HttpObservationContext,
+  capture: RequestCaptureOptions<unknown> | undefined,
+): ObservationAttributeMap {
+  if (!capture) return {};
+
+  if (ctx.phase === "start") {
+    return resolveSelectionAttributes(
+      "http.request.header.",
+      capture.headers,
+      ctx.headers as Record<string, unknown> | undefined,
+      capture,
+    );
+  }
+
+  return {
+    ...resolveSelectionAttributes(
+      "http.request.query.",
+      capture.query,
+      ctx.query as Record<string, unknown> | undefined,
+      capture,
+    ),
+    ...resolveSelectionAttributes(
+      "http.request.param.",
+      capture.params,
+      ctx.params as Record<string, unknown> | undefined,
+      capture,
+    ),
+    ...resolveBodyAttributes(capture.body, ctx.body, capture),
+  };
+}
+
 // ── 工厂函数 ─────────────────────────────────────────────────
 
 /**
@@ -105,6 +377,7 @@ export function buildCoreHandlers<TRaw = unknown>(
   const endAttributesFn = options.tracing?.endAttributes;
   const spanNameResolver = options.tracing?.spanNameResolver;
   const lifecycle = options.lifecycle;
+  const capture = options.capture;
 
   // 指标创建（SDK 未初始化时为 Noop，isRecording=false，全部静默）
   const meter = otelMetrics.getMeter(meterName);
@@ -212,10 +485,12 @@ export function buildCoreHandlers<TRaw = unknown>(
       invokeLifecycleStart(startCtx, raw);
 
       if (shouldTrace && activeSpan?.isRecording()) {
+        const captured = resolveCapturedAttributes(startCtx, capture as RequestCaptureOptions<unknown> | undefined);
         const extra = resolveAttributes(startAttributesFn, startCtx, raw);
         activeSpan.setAttributes({
           "http.request_id": startCtx.requestId ?? "",
           "vext.service": serviceName,
+          ...captured,
           ...extra,
         });
       }
@@ -235,10 +510,12 @@ export function buildCoreHandlers<TRaw = unknown>(
       };
 
       if (state.shouldTrace && state.activeSpan?.isRecording()) {
+        const captured = resolveCapturedAttributes(finalCtx, capture as RequestCaptureOptions<unknown> | undefined);
         const late = resolveAttributes(endAttributesFn, finalCtx, raw);
         state.activeSpan.setAttributes({
           "http.route": route,
           "http.status_code": statusCode,
+          ...captured,
           ...late,
         });
 
@@ -290,10 +567,12 @@ export function buildCoreHandlers<TRaw = unknown>(
       };
 
       if (state.shouldTrace && state.activeSpan?.isRecording()) {
+        const captured = resolveCapturedAttributes(finalCtx, capture as RequestCaptureOptions<unknown> | undefined);
         const late = resolveAttributes(endAttributesFn, finalCtx, raw);
         state.activeSpan.setAttributes({
           "http.route": route,
           "http.status_code": 500,
+          ...captured,
           ...late,
         });
         if (spanNameResolver) {

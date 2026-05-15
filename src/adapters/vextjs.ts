@@ -12,6 +12,11 @@ import type { Attributes } from "@opentelemetry/api";
 import { definePlugin, defineMiddleware, requestContext } from "vextjs";
 import type { VextRequest, VextLogger, VextPluginContext } from "vextjs";
 
+import {
+  normalizeParamsRecord,
+  normalizeQueryRecord,
+  resolveCapturedAttributes,
+} from "../core/http-core.js";
 import { withSpan, getOtelStatus, getActiveTraceId, getOtelLogger } from "../core/span.js";
 import { attachExporterToSdk } from "../core/sdk-config.js";
 import { createOtelLogBridge } from "../log.js";
@@ -161,6 +166,7 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
   const startAttributesFn = options.tracing?.startAttributes;
   const endAttributesFn = options.tracing?.endAttributes;
   const lifecycle = options.lifecycle;
+  const capture = options.capture;
 
   function resolveLabels(ctx: HttpObservationContext, req: VextRequest): Record<string, string | number | boolean> {
     if (!metricsLabelsFn) return {};
@@ -231,6 +237,9 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       route: req.route ? String(req.route) : undefined,
       requestId: req.requestId,
       headers: req.headers as Record<string, string | string[] | undefined>,
+      query: normalizeQueryRecord(req.query),
+      params: normalizeParamsRecord(req.params),
+      body: req.body,
       requestSize: requestSize !== undefined && !isNaN(requestSize) ? requestSize : undefined,
     };
 
@@ -248,12 +257,14 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
     invokeLifecycleStart(startCtx, req);
 
     if (shouldTrace && activeSpan?.isRecording()) {
+      const captured = resolveCapturedAttributes(startCtx, capture);
       const extra = resolveStartAttributes(startCtx, req);
 
       activeSpan.setAttributes({
         ...(startCtx.route ? { "http.route": startCtx.route } : {}),
         "http.request_id": req.requestId ?? "",
         "vext.service": serviceName,
+        ...captured,
         ...extra,
       });
 
@@ -287,6 +298,9 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
         route,
         requestId: req.requestId,
         headers: req.headers as Record<string, string | string[] | undefined>,
+        query: normalizeQueryRecord(req.query),
+        params: normalizeParamsRecord(req.params),
+        body: req.body,
         requestSize: requestSize !== undefined && !isNaN(requestSize) ? requestSize : undefined,
         responseSize: responseSize !== undefined && !isNaN(responseSize) ? responseSize : undefined,
         statusCode,
@@ -313,11 +327,15 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       }
 
       if (shouldTrace && activeSpan?.isRecording()) {
+        const captured = resolveCapturedAttributes(endCtx, capture);
         const late = resolveEndAttributes(endCtx, req);
         activeSpan.setAttribute("http.status_code", statusCode);
         activeSpan.setAttribute("http.route", route);
-        if (Object.keys(late).length > 0) {
-          activeSpan.setAttributes(late);
+        if (Object.keys(captured).length > 0 || Object.keys(late).length > 0) {
+          activeSpan.setAttributes({
+            ...captured,
+            ...late,
+          });
         }
         if (options.tracing?.spanNameResolver) {
           activeSpan.updateName(options.tracing.spanNameResolver(endCtx, req));
@@ -342,6 +360,9 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
         route,
         requestId: req.requestId,
         headers: req.headers as Record<string, string | string[] | undefined>,
+        query: normalizeQueryRecord(req.query),
+        params: normalizeParamsRecord(req.params),
+        body: req.body,
         requestSize: requestSize !== undefined && !isNaN(requestSize) ? requestSize : undefined,
         statusCode: 500,
         latencyMs: duration,
@@ -360,11 +381,15 @@ export function createTracingMiddleware(metrics: OtelMetrics, options: OpenTelem
       }
 
       if (shouldTrace && activeSpan?.isRecording()) {
+        const captured = resolveCapturedAttributes(endCtx, capture);
         const late = resolveEndAttributes(endCtx, req);
         activeSpan.setAttribute("http.route", route);
         activeSpan.setAttribute("http.status_code", 500);
-        if (Object.keys(late).length > 0) {
-          activeSpan.setAttributes(late);
+        if (Object.keys(captured).length > 0 || Object.keys(late).length > 0) {
+          activeSpan.setAttributes({
+            ...captured,
+            ...late,
+          });
         }
         if (options.tracing?.spanNameResolver) {
           activeSpan.updateName(options.tracing.spanNameResolver(endCtx, req));

@@ -56,6 +56,9 @@ function makeReq(overrides: Partial<Request> = {}): Request {
     path: "/test",
     url: "/test",
     headers: { "x-request-id": "req-001" } as Record<string, string>,
+    query: { page: "1" } as Request["query"],
+    params: { id: "42" } as Request["params"],
+    body: { orderNo: "A001" },
     route: undefined,
     ...overrides,
   } as unknown as Request;
@@ -149,6 +152,31 @@ describe("createExpressMiddleware", () => {
     res.emit("error", new Error("network"));
 
     expect(mockSpan.updateName).toHaveBeenCalledWith("GET /orders/:id");
+  });
+
+  it("capture 可从 Express req 映射 query / params / body", () => {
+    const mw = createExpressMiddleware({
+      capture: {
+        query: true,
+        params: true,
+        body: ["orderNo"],
+      },
+    });
+    const next = vi.fn();
+    const res = makeRes();
+    const req = makeReq({ route: { path: "/orders/:id" } as never });
+
+    mw(req, res as Response, next);
+    vi.clearAllMocks();
+    res.emit("finish");
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.request.query.page": "1",
+        "http.request.param.id": "42",
+        "http.request.body.orderNo": "A001",
+      }),
+    );
   });
 
   it("ignorePaths 匹配时 span 不被标注", () => {
