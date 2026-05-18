@@ -155,14 +155,14 @@ describe("createHonoMiddleware", () => {
     expect(mockSpan.updateName).toHaveBeenCalledWith("GET /boom/:id");
   });
 
-  it("capture 可从 Hono req 映射 query / params，并仅在 bodyCache 已存在时采集 body", async () => {
+  it("capture 可从 Hono req 映射 query / params，并仅在 bodyCache 已存在时支持 body 全量采集", async () => {
     const app = new Hono();
     app.use(
       createHonoMiddleware({
         capture: {
           query: true,
           params: true,
-          body: ["orderNo"],
+          body: true,
         },
       }),
     );

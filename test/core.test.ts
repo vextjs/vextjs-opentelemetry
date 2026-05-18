@@ -158,6 +158,43 @@ describe("buildCoreHandlers", () => {
         }),
       );
     });
+
+    it("capture.headers 支持显式全量、排除、脱敏与快照", () => {
+      const handlers = buildCoreHandlers({
+        capture: {
+          headers: {
+            mode: "all",
+            exclude: ["cookie"],
+            sensitiveKeys: ["authorization"],
+            output: "both",
+          },
+        },
+      });
+
+      handlers.onRequestStart(
+        makeCtx({
+          headers: {
+            authorization: "Bearer token-123",
+            cookie: "sid=abc",
+            "x-tenant-id": "tenant-a",
+          },
+        }),
+        undefined,
+      );
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "http.request.header.authorization": "[REDACTED]",
+          "http.request.header.x-tenant-id": "tenant-a",
+          "request.headers.raw": JSON.stringify({
+            authorization: "[REDACTED]",
+            "x-tenant-id": "tenant-a",
+          }),
+        }),
+      );
+      const attrs = mockSpan.setAttributes.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(attrs["http.request.header.cookie"]).toBeUndefined();
+    });
   });
 
   // ── onRequestEnd ───────────────────────────────────────────
@@ -330,6 +367,84 @@ describe("buildCoreHandlers", () => {
         "http.request.body.summary": "abcd",
       });
       expect(attrs["http.request.body.wholeCustomer"]).toBeUndefined();
+    });
+
+    it("capture.body=true 支持递归叶子展开、数组上限、排除与快照", () => {
+      const handlers = buildCoreHandlers({
+        capture: {
+          body: {
+            mode: "all",
+            exclude: ["password"],
+            sensitiveKeys: [/token/i],
+            maxItems: 2,
+            output: "both",
+          },
+        },
+      });
+      const state = handlers.onRequestStart(makeCtx(), undefined);
+      vi.clearAllMocks();
+
+      handlers.onRequestEnd(
+        state,
+        makeCtx({
+          phase: "end",
+          route: "/orders/:id",
+          body: {
+            orderNo: "A001",
+            items: [
+              { sku: "sku-1" },
+              { sku: "sku-2" },
+              { sku: "sku-3" },
+            ],
+            authToken: "secret-token",
+            password: "pw123",
+          },
+        }),
+        200,
+        undefined,
+      );
+
+      const attrs = mockSpan.setAttributes.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(attrs).toMatchObject({
+        "http.request.body.orderNo": "A001",
+        "http.request.body.items.0.sku": "sku-1",
+        "http.request.body.items.1.sku": "sku-2",
+        "http.request.body.authToken": "[REDACTED]",
+        "request.body.raw": JSON.stringify({
+          orderNo: "A001",
+          items: [{ sku: "sku-1" }, { sku: "sku-2" }],
+          authToken: "[REDACTED]",
+        }),
+      });
+      expect(attrs["http.request.body.items.2.sku"]).toBeUndefined();
+      expect(attrs["http.request.body.password"]).toBeUndefined();
+    });
+
+    it("capture.body.output='snapshot' 时仅输出快照，不展开属性", () => {
+      const handlers = buildCoreHandlers({
+        capture: {
+          body: {
+            mode: "all",
+            output: "snapshot",
+          },
+        },
+      });
+      const state = handlers.onRequestStart(makeCtx(), undefined);
+      vi.clearAllMocks();
+
+      handlers.onRequestEnd(
+        state,
+        makeCtx({
+          phase: "end",
+          body: { orderNo: "A001", customer: { id: "U1001" } },
+        }),
+        200,
+        undefined,
+      );
+
+      const attrs = mockSpan.setAttributes.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(attrs["request.body.raw"]).toBe(JSON.stringify({ orderNo: "A001", customer: { id: "U1001" } }));
+      expect(attrs["http.request.body.orderNo"]).toBeUndefined();
     });
 
     it("用户 endAttributes 与 capture 同名时，用户 resolver 保留最终覆盖权", () => {

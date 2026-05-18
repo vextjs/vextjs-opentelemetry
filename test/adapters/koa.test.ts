@@ -157,16 +157,23 @@ describe("createKoaMiddleware", () => {
     expect(mockSpan.updateName).toHaveBeenCalledWith("GET /resolved");
   });
 
-  it("capture 可从 Koa ctx 映射 query / params / body", async () => {
+  it("capture 可从 Koa ctx 映射 headers / query / params / body，并支持全量模式", async () => {
     const mw = createKoaMiddleware({
       capture: {
+        headers: true,
         query: true,
         params: true,
-        body: ["orderNo"],
+        body: true,
       },
     });
 
     await mw(makeCtx({ routerPath: "/orders/:id" }), mockNext);
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.request.header.x-request-id": "req-001",
+      }),
+    );
 
     expect(mockSpan.setAttributes).toHaveBeenCalledWith(
       expect.objectContaining({

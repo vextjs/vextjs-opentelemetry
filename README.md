@@ -357,10 +357,10 @@ initOtel({
 
 ### 推荐策略
 
-- headers → **白名单**（如 `x-request-id`、`x-tenant-id`、`user-agent`）
+- headers → **默认白名单**；需要复现请求时，也可显式开启全量模式，但应同时配置排除 / 脱敏规则
 - query → **默认白名单**；当你明确知道业务需要时，可显式开启全量模式
 - params → **默认白名单**；路由参数天然更结构化，也可显式开启全量模式
-- body → **优先白名单**，不要黑名单兜底，也不支持 whole-body capture
+- body → **默认白名单**；需要复现请求时，也可显式开启全量模式，但应同时配置深度 / 数量 / 脱敏规则
 - metrics labels → **只保留低基数字段**
 
 ### 声明式 `capture`
@@ -385,15 +385,24 @@ const options = {
 - `http.request.param.*`
 - `http.request.body.*`
 
-### `query / params` 的显式全量模式
+当配置 `snapshot: true` 或 `output: "snapshot" | "both"` 时，还会额外生成：
 
-如果你的业务场景里，**确实需要把当前请求的全部 query 或全部 params 都打到 Span 属性上**，可以显式开启：
+- `request.headers.raw`
+- `request.query.raw`
+- `request.params.raw`
+- `request.body.raw`
+
+### 四类输入的显式全量模式
+
+如果你的业务场景里，**确实需要把当前请求的完整输入打到观测数据里**，可以显式开启：
 
 ```ts
 const options = {
   capture: {
+    headers: true,
     query: true,
     params: true,
+    body: true,
   },
 };
 ```
@@ -403,8 +412,10 @@ const options = {
 ```ts
 const options = {
   capture: {
+    headers: "*",
     query: "*",
     params: "*",
+    body: "*",
   },
 };
 ```
@@ -412,18 +423,103 @@ const options = {
 注意：
 
 1. 这不是默认行为，而是**显式 opt-in**；
-2. 全量模式只对 `query / params` 开放；
+2. 全量模式对 `headers / query / params / body` 都开放；
 3. 进入全量模式后，仍然会经过：
    - 敏感字段脱敏
    - 字符串长度截断
-   - 非标量值跳过
+   - body 的深度/数组数量限制
+   - 非标量值的安全处理
 4. `capture` 不会自动进入 `metrics.labels`。
 
-### 为什么 `headers / body` 不提供全量模式？
+### 规则对象：筛选 / 排除 / 脱敏 / 输出控制
+
+如果你不仅要“开全量”，还需要控制输出范围，可以用规则对象：
+
+```ts
+const options = {
+  capture: {
+    headers: {
+      mode: "all",
+      exclude: ["cookie"],
+      sensitiveKeys: ["authorization"],
+      output: "both",
+    },
+    body: {
+      mode: "all",
+      exclude: ["password"],
+      sensitiveKeys: [/token/i],
+      maxDepth: 6,
+      maxItems: 50,
+      maxValueLength: 4096,
+      output: "both",
+    },
+  },
+};
+```
+
+支持的关键字段：
+
+- `mode: "allowlist" | "all"`
+- `fields`：显式白名单字段
+- `exclude`：排除字段 / 路径
+- `sensitiveKeys`：当前 source 的敏感键规则
+- `maxValueLength`：字符串截断长度
+- `maxDepth`：对象递归展开深度（主要用于 body）
+- `maxItems`：数组展开数量上限（主要用于 body）
+- `snapshot: true`：兼容快捷开关，等价于开启快照输出
+- `output: "attributes" | "snapshot" | "both"`
+
+### 为什么默认仍不建议 `headers / body` 全量？
 
 - `headers` 很容易包含 `authorization`、`cookie` 这类高风险字段；
 - `body` 更容易包含密码、手机号、邮箱、Token、复杂对象、超长文本；
-- 因此 `headers / body` 仍然要求显式白名单，避免“一开就脏”。
+- 因此虽然库**支持显式全量**，默认策略仍应优先白名单或规则控制，避免“一开就脏”。
+
+### 普通观测模式 vs 复现模式
+
+#### 普通观测模式（默认推荐）
+
+```ts
+const options = {
+  capture: {
+    headers: ["x-tenant-id", "x-request-id"],
+    query: true,
+    params: true,
+    body: ["orderNo", "customer.id"],
+  },
+};
+```
+
+- 适合排障、聚合分析
+- 不保留完整原始请求快照
+
+#### 复现模式（显式开启）
+
+```ts
+const options = {
+  capture: {
+    headers: {
+      mode: "all",
+      exclude: ["cookie"],
+      sensitiveKeys: ["authorization"],
+      output: "both",
+    },
+    query: { mode: "all", output: "attributes" },
+    params: { mode: "all", output: "attributes" },
+    body: {
+      mode: "all",
+      exclude: ["password"],
+      sensitiveKeys: [/token/i],
+      maxDepth: 6,
+      maxItems: 50,
+      output: "both",
+    },
+  },
+};
+```
+
+- 适合请求复现 / replay 增强
+- 建议和排除 / 脱敏 / 截断规则一起使用
 
 ### Hono 的 `body` 特别说明
 

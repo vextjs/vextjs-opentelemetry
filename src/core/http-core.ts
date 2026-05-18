@@ -12,9 +12,9 @@
 import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
 import type { Span } from "@opentelemetry/api";
 import type {
-  CaptureCollectionSelection,
+  CaptureInput,
   CaptureFieldRule,
-  CaptureFieldSelection,
+  CaptureSourceOptions,
   HttpObservationContext,
   HttpOtelOptions,
   ObservationAttributeMap,
@@ -39,6 +39,8 @@ const METRIC_REQ_SIZE  = "http.server.request.size";
 const METRIC_RESP_SIZE = "http.server.response.size";
 
 const DEFAULT_CAPTURE_MAX_VALUE_LENGTH = 256;
+const DEFAULT_CAPTURE_MAX_DEPTH = 6;
+const DEFAULT_CAPTURE_MAX_ITEMS = 50;
 const REDACTED_VALUE = "[REDACTED]";
 const DEFAULT_SENSITIVE_KEYS: (string | RegExp)[] = [
   /authorization/i,
@@ -108,17 +110,38 @@ interface NormalizedCaptureField {
 interface NormalizedCaptureSelection {
   all: boolean;
   fields: NormalizedCaptureField[];
+  exclude: (string | RegExp)[];
+  sensitiveKeys?: (string | RegExp)[];
+  maxValueLength?: number;
+  maxDepth: number;
+  maxItems: number;
+  output: "attributes" | "snapshot" | "both";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isCaptureAllSelection(selection: CaptureCollectionSelection | undefined): selection is true | "*" {
+function isCaptureAllSelection(selection: CaptureInput | undefined): selection is true | "*" {
   return selection === true || selection === "*";
 }
 
-function matchesSensitiveKey(
+function isCaptureSourceOptions(selection: CaptureInput | undefined): selection is CaptureSourceOptions {
+  if (!isRecord(selection) || Array.isArray(selection)) return false;
+  return [
+    "mode",
+    "fields",
+    "exclude",
+    "sensitiveKeys",
+    "maxValueLength",
+    "maxDepth",
+    "maxItems",
+    "snapshot",
+    "output",
+  ].some((key) => key in selection);
+}
+
+function matchesCaptureKey(
   attributeKey: string,
   sourceKey: string,
   patterns: (string | RegExp)[],
@@ -138,6 +161,28 @@ function matchesSensitiveKey(
   );
 }
 
+function shouldExclude(
+  attributeKey: string,
+  sourceKey: string,
+  patterns: (string | RegExp)[],
+): boolean {
+  return patterns.length > 0 && matchesCaptureKey(attributeKey, sourceKey, patterns);
+}
+
+function getEffectiveSensitiveKeys(
+  normalized: NormalizedCaptureSelection,
+  capture: RequestCaptureOptions<unknown>,
+): (string | RegExp)[] {
+  return normalized.sensitiveKeys ?? capture.sensitiveKeys ?? DEFAULT_SENSITIVE_KEYS;
+}
+
+function getEffectiveMaxValueLength(
+  normalized: NormalizedCaptureSelection,
+  capture: RequestCaptureOptions<unknown>,
+): number {
+  return normalized.maxValueLength ?? capture.maxValueLength ?? DEFAULT_CAPTURE_MAX_VALUE_LENGTH;
+}
+
 function getValueByPath(source: unknown, sourcePath: string): unknown {
   if (!sourcePath) return undefined;
 
@@ -146,17 +191,45 @@ function getValueByPath(source: unknown, sourcePath: string): unknown {
     return typeof entry === "string" ? entry : undefined;
   }
 
-  if (!isRecord(source)) return undefined;
+  if (!isRecord(source) && !Array.isArray(source)) return undefined;
 
   const segments = sourcePath.split(".").filter(Boolean);
   let current: unknown = source;
   for (const segment of segments) {
-    if (!isRecord(current) || !(segment in current)) {
-      return undefined;
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        return undefined;
+      }
+      current = current[index];
+      continue;
     }
+    if (!isRecord(current) || !(segment in current)) return undefined;
     current = current[segment];
   }
   return current;
+}
+
+function setValueByPath(target: Record<string, unknown>, path: string, value: unknown): void {
+  const segments = path.split(".").filter(Boolean);
+  if (segments.length === 0) return;
+
+  let current: Record<string, unknown> = target;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const segment = segments[index];
+    const next = current[segment];
+    if (!isRecord(next)) {
+      current[segment] = {};
+    }
+    current = current[segment] as Record<string, unknown>;
+  }
+  current[segments[segments.length - 1]] = value;
+}
+
+function serializeSnapshot(value: unknown, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
+  const serialized = typeof value === "string" ? value : JSON.stringify(value);
+  return serialized.length > maxLength ? serialized.slice(0, maxLength) : serialized;
 }
 
 function toAttributeValue(
@@ -165,11 +238,12 @@ function toAttributeValue(
   sourceKey: string,
   rule: CaptureFieldRule,
   capture: RequestCaptureOptions<unknown>,
+  normalized?: NormalizedCaptureSelection,
 ): string | number | boolean | undefined {
   if (value === undefined || value === null) return undefined;
 
-  const sensitiveKeys = capture.sensitiveKeys ?? DEFAULT_SENSITIVE_KEYS;
-  if (rule.redact !== undefined || matchesSensitiveKey(attributeKey, sourceKey, sensitiveKeys)) {
+  const sensitiveKeys = normalized ? getEffectiveSensitiveKeys(normalized, capture) : capture.sensitiveKeys ?? DEFAULT_SENSITIVE_KEYS;
+  if (rule.redact !== undefined || matchesCaptureKey(attributeKey, sourceKey, sensitiveKeys)) {
     if (typeof rule.redact === "string") return rule.redact;
     return REDACTED_VALUE;
   }
@@ -183,7 +257,7 @@ function toAttributeValue(
   }
 
   if (typeof value === "string") {
-    const maxLength = rule.maxLength ?? capture.maxValueLength ?? DEFAULT_CAPTURE_MAX_VALUE_LENGTH;
+    const maxLength = rule.maxLength ?? (normalized ? getEffectiveMaxValueLength(normalized, capture) : capture.maxValueLength ?? DEFAULT_CAPTURE_MAX_VALUE_LENGTH);
     return value.length > maxLength ? value.slice(0, maxLength) : value;
   }
   if (typeof value === "number" || typeof value === "boolean") {
@@ -193,18 +267,58 @@ function toAttributeValue(
 }
 
 export function normalizeCaptureSelection(
-  selection: CaptureFieldSelection | CaptureCollectionSelection | undefined,
+  selection: CaptureInput | undefined,
 ): NormalizedCaptureSelection {
   if (!selection) {
-    return { all: false, fields: [] };
+    return {
+      all: false,
+      fields: [],
+      exclude: [],
+      maxDepth: DEFAULT_CAPTURE_MAX_DEPTH,
+      maxItems: DEFAULT_CAPTURE_MAX_ITEMS,
+      output: "attributes",
+    };
   }
   if (isCaptureAllSelection(selection)) {
-    return { all: true, fields: [] };
+    return {
+      all: true,
+      fields: [],
+      exclude: [],
+      maxDepth: DEFAULT_CAPTURE_MAX_DEPTH,
+      maxItems: DEFAULT_CAPTURE_MAX_ITEMS,
+      output: "attributes",
+    };
+  }
+  if (isCaptureSourceOptions(selection)) {
+    const fields = selection.fields;
+    const normalizedFields = fields
+      ? Array.isArray(fields)
+        ? fields.map((key) => ({ attributeKey: key, sourceKey: key, rule: {} }))
+        : Object.entries(fields).map(([attributeKey, rule]) => ({
+            attributeKey,
+            sourceKey: rule.from ?? attributeKey,
+            rule,
+          }))
+      : [];
+    return {
+      all: selection.mode === "all",
+      fields: normalizedFields,
+      exclude: selection.exclude ?? [],
+      sensitiveKeys: selection.sensitiveKeys,
+      maxValueLength: selection.maxValueLength,
+      maxDepth: selection.maxDepth ?? DEFAULT_CAPTURE_MAX_DEPTH,
+      maxItems: selection.maxItems ?? DEFAULT_CAPTURE_MAX_ITEMS,
+      output: selection.output ?? (selection.snapshot ? "both" : "attributes"),
+    };
   }
   if (Array.isArray(selection)) {
     return {
       all: false,
       fields: selection.map((key) => ({ attributeKey: key, sourceKey: key, rule: {} })),
+      exclude: [],
+      maxDepth: DEFAULT_CAPTURE_MAX_DEPTH,
+      maxItems: DEFAULT_CAPTURE_MAX_ITEMS,
+      output: "attributes",
     };
   }
   return {
@@ -214,6 +328,10 @@ export function normalizeCaptureSelection(
       sourceKey: rule.from ?? attributeKey,
       rule,
     })),
+    exclude: [],
+    maxDepth: DEFAULT_CAPTURE_MAX_DEPTH,
+    maxItems: DEFAULT_CAPTURE_MAX_ITEMS,
+    output: "attributes",
   };
 }
 
@@ -265,40 +383,203 @@ export function normalizeParamsRecord(
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+function shouldEmitExpandedAttributes(normalized: NormalizedCaptureSelection): boolean {
+  return normalized.output === "attributes" || normalized.output === "both";
+}
+
+function shouldEmitSnapshot(normalized: NormalizedCaptureSelection): boolean {
+  return normalized.output === "snapshot" || normalized.output === "both";
+}
+
+function projectCaptureSource(source: unknown, normalized: NormalizedCaptureSelection): unknown {
+  if (normalized.all || normalized.fields.length === 0) return source;
+
+  const projected: Record<string, unknown> = {};
+  for (const field of normalized.fields) {
+    const rawValue = getValueByPath(source, field.sourceKey);
+    if (rawValue !== undefined) {
+      setValueByPath(projected, field.attributeKey, rawValue);
+    }
+  }
+  return projected;
+}
+
+function sanitizeSnapshotValue(
+  value: unknown,
+  normalized: NormalizedCaptureSelection,
+  capture: RequestCaptureOptions<unknown>,
+  currentPath = "",
+  depth = 0,
+): unknown {
+  if (value === undefined) return undefined;
+  if (currentPath && shouldExclude(currentPath, currentPath, normalized.exclude)) return undefined;
+  if (currentPath && matchesCaptureKey(currentPath, currentPath, getEffectiveSensitiveKeys(normalized, capture))) {
+    return REDACTED_VALUE;
+  }
+
+  if (typeof value === "string") {
+    const maxLength = getEffectiveMaxValueLength(normalized, capture);
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (depth >= normalized.maxDepth) return "[Truncated]";
+    return value
+      .slice(0, normalized.maxItems)
+      .map((item, index) => sanitizeSnapshotValue(
+        item,
+        normalized,
+        capture,
+        currentPath ? `${currentPath}.${index}` : String(index),
+        depth + 1,
+      ))
+      .filter((item) => item !== undefined);
+  }
+  if (typeof FormData !== "undefined" && value instanceof FormData) {
+    const formDataObject: Record<string, unknown> = {};
+    for (const [key, entry] of value.entries()) {
+      if (typeof entry !== "string") continue;
+      const existing = formDataObject[key];
+      if (existing === undefined) {
+        formDataObject[key] = entry;
+      } else if (Array.isArray(existing)) {
+        existing.push(entry);
+      } else {
+        formDataObject[key] = [existing, entry];
+      }
+    }
+    return sanitizeSnapshotValue(formDataObject, normalized, capture, currentPath, depth);
+  }
+  if (!isRecord(value)) return undefined;
+  if (depth >= normalized.maxDepth) return "[Truncated]";
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, childValue] of Object.entries(value)) {
+    const childPath = currentPath ? `${currentPath}.${key}` : key;
+    const nextValue = sanitizeSnapshotValue(childValue, normalized, capture, childPath, depth + 1);
+    if (nextValue !== undefined) {
+      sanitized[key] = nextValue;
+    }
+  }
+  return sanitized;
+}
+
+function buildSnapshotAttributes(
+  attributeName: string,
+  source: unknown,
+  normalized: NormalizedCaptureSelection,
+  capture: RequestCaptureOptions<unknown>,
+): ObservationAttributeMap {
+  if (!shouldEmitSnapshot(normalized) || source === undefined) return {};
+
+  const snapshotSource = projectCaptureSource(source, normalized);
+  const sanitized = sanitizeSnapshotValue(snapshotSource, normalized, capture);
+  const serialized = serializeSnapshot(sanitized, getEffectiveMaxValueLength(normalized, capture));
+  if (!serialized || serialized === "{}" || serialized === "[]") return {};
+
+  return { [attributeName]: serialized };
+}
+
+function flattenBodyAttributes(
+  value: unknown,
+  currentPath: string,
+  depth: number,
+  attributes: ObservationAttributeMap,
+  normalized: NormalizedCaptureSelection,
+  capture: RequestCaptureOptions<unknown>,
+): void {
+  if (value === undefined || value === null) return;
+  if (currentPath && shouldExclude(currentPath, currentPath, normalized.exclude)) return;
+  if (currentPath && matchesCaptureKey(currentPath, currentPath, getEffectiveSensitiveKeys(normalized, capture))) {
+    attributes[`http.request.body.${currentPath}`] = REDACTED_VALUE;
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (depth >= normalized.maxDepth) return;
+    for (const [index, item] of value.slice(0, normalized.maxItems).entries()) {
+      const nextPath = currentPath ? `${currentPath}.${index}` : String(index);
+      flattenBodyAttributes(item, nextPath, depth + 1, attributes, normalized, capture);
+    }
+    return;
+  }
+
+  if (typeof FormData !== "undefined" && value instanceof FormData) {
+    const formDataObject: Record<string, unknown> = {};
+    for (const [key, entry] of value.entries()) {
+      if (typeof entry !== "string") continue;
+      const existing = formDataObject[key];
+      if (existing === undefined) {
+        formDataObject[key] = entry;
+      } else if (Array.isArray(existing)) {
+        existing.push(entry);
+      } else {
+        formDataObject[key] = [existing, entry];
+      }
+    }
+    flattenBodyAttributes(formDataObject, currentPath, depth, attributes, normalized, capture);
+    return;
+  }
+
+  if (isRecord(value)) {
+    if (depth >= normalized.maxDepth) return;
+    for (const [key, childValue] of Object.entries(value)) {
+      const nextPath = currentPath ? `${currentPath}.${key}` : key;
+      flattenBodyAttributes(childValue, nextPath, depth + 1, attributes, normalized, capture);
+    }
+    return;
+  }
+
+  if (!currentPath) return;
+  const attributeValue = toAttributeValue(value, currentPath, currentPath, {}, capture, normalized);
+  if (attributeValue !== undefined) {
+    attributes[`http.request.body.${currentPath}`] = attributeValue;
+  }
+}
+
 function resolveSelectionAttributes(
   prefix: string,
-  selection: CaptureFieldSelection | CaptureCollectionSelection | undefined,
+  selection: CaptureInput | undefined,
   source: Record<string, unknown> | undefined,
   capture: RequestCaptureOptions<unknown>,
+  snapshotAttributeName: string,
 ): ObservationAttributeMap {
   if (!selection || !source) return {};
 
   const normalized = normalizeCaptureSelection(selection);
   const attributes: ObservationAttributeMap = {};
 
-  if (normalized.all) {
-    for (const [key, rawValue] of Object.entries(source)) {
-      const attributeValue = toAttributeValue(rawValue, key, key, {}, capture);
-      if (attributeValue !== undefined) {
-        attributes[`${prefix}${key}`] = attributeValue;
+  if (shouldEmitExpandedAttributes(normalized)) {
+    if (normalized.all) {
+      for (const [key, rawValue] of Object.entries(source)) {
+        if (shouldExclude(key, key, normalized.exclude)) continue;
+        const attributeValue = toAttributeValue(rawValue, key, key, {}, capture, normalized);
+        if (attributeValue !== undefined) {
+          attributes[`${prefix}${key}`] = attributeValue;
+        }
+      }
+    } else {
+      for (const field of normalized.fields) {
+        if (shouldExclude(field.attributeKey, field.sourceKey, normalized.exclude)) continue;
+        const rawValue = source[field.sourceKey];
+        const attributeValue = toAttributeValue(rawValue, field.attributeKey, field.sourceKey, field.rule, capture, normalized);
+        if (attributeValue !== undefined) {
+          attributes[`${prefix}${field.attributeKey}`] = attributeValue;
+        }
       }
     }
-    return attributes;
   }
 
-  for (const field of normalized.fields) {
-    const rawValue = source[field.sourceKey];
-    const attributeValue = toAttributeValue(rawValue, field.attributeKey, field.sourceKey, field.rule, capture);
-    if (attributeValue !== undefined) {
-      attributes[`${prefix}${field.attributeKey}`] = attributeValue;
-    }
-  }
-
-  return attributes;
+  return {
+    ...attributes,
+    ...buildSnapshotAttributes(snapshotAttributeName, source, normalized, capture),
+  };
 }
 
 function resolveBodyAttributes(
-  selection: CaptureFieldSelection | undefined,
+  selection: CaptureInput | undefined,
   body: unknown,
   capture: RequestCaptureOptions<unknown>,
 ): ObservationAttributeMap {
@@ -306,20 +587,33 @@ function resolveBodyAttributes(
 
   const normalized = normalizeCaptureSelection(selection);
   const attributes: ObservationAttributeMap = {};
-  for (const field of normalized.fields) {
-    const rawValue = getValueByPath(body, field.sourceKey);
-    const attributeValue = toAttributeValue(
-      rawValue,
-      field.attributeKey,
-      field.sourceKey,
-      field.rule,
-      capture,
-    );
-    if (attributeValue !== undefined) {
-      attributes[`http.request.body.${field.attributeKey}`] = attributeValue;
+
+  if (shouldEmitExpandedAttributes(normalized)) {
+    if (normalized.all) {
+      flattenBodyAttributes(body, "", 0, attributes, normalized, capture);
+    } else {
+      for (const field of normalized.fields) {
+        if (shouldExclude(field.attributeKey, field.sourceKey, normalized.exclude)) continue;
+        const rawValue = getValueByPath(body, field.sourceKey);
+        const attributeValue = toAttributeValue(
+          rawValue,
+          field.attributeKey,
+          field.sourceKey,
+          field.rule,
+          capture,
+          normalized,
+        );
+        if (attributeValue !== undefined) {
+          attributes[`http.request.body.${field.attributeKey}`] = attributeValue;
+        }
+      }
     }
   }
-  return attributes;
+
+  return {
+    ...attributes,
+    ...buildSnapshotAttributes("request.body.raw", body, normalized, capture),
+  };
 }
 
 export function resolveCapturedAttributes(
@@ -334,6 +628,7 @@ export function resolveCapturedAttributes(
       capture.headers,
       ctx.headers as Record<string, unknown> | undefined,
       capture,
+      "request.headers.raw",
     );
   }
 
@@ -343,12 +638,14 @@ export function resolveCapturedAttributes(
       capture.query,
       ctx.query as Record<string, unknown> | undefined,
       capture,
+      "request.query.raw",
     ),
     ...resolveSelectionAttributes(
       "http.request.param.",
       capture.params,
       ctx.params as Record<string, unknown> | undefined,
       capture,
+      "request.params.raw",
     ),
     ...resolveBodyAttributes(capture.body, ctx.body, capture),
   };

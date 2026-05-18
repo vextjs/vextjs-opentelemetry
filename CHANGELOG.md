@@ -5,7 +5,7 @@ All notable changes to `vextjs-opentelemetry` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> 📂 **Detailed changelogs**: 已发布版本的独立说明可从 [`changelogs/v2.0.0.md`](./changelogs/v2.0.0.md) 进入查看（历史 patch 说明按现有规范追加在该文件中）。
+> 📂 **Detailed changelogs**: 已发布版本的独立说明可从 [`changelogs/v2.1.0.md`](./changelogs/v2.1.0.md) 进入查看（`v2.0.x` 历史 patch 说明保留在 [`changelogs/v2.0.0.md`](./changelogs/v2.0.0.md)）。
 > 本文件仅作为版本总览索引，方便快速浏览发布历史。
 
 ---
@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Version | Date | Type | Key Theme |
 |---------|------|------|-----------|
 | [Unreleased] | — | — | — |
+| [2.1.0] | 2026-05-18 | Minor | `capture` 能力增强：四类输入统一支持显式全量、规则对象控制、body flatten/snapshot 与 `maxItems`/`output` 护栏 [查看](./changelogs/v2.1.0.md) |
 | [2.0.2] | 2026-05-18 | Patch | Docker / 私有源兼容性回退：将 `@opentelemetry/auto-instrumentations-node` 临时回退到 `0.72.0`，锁文件同步刷新并保持 `verify` 全通过 [查看](./changelogs/v2.0.0.md) |
 | [2.0.1] | 2026-05-15 | Patch | `capture` 收口发布：`query/params` 显式全量采集、Koa/Egg 晚到字段修复、README 重构与依赖安全升级 [查看](./changelogs/v2.0.0.md) |
 | [2.0.0] | 2026-05-14 | Major | 统一公开配置模型：`startAttributes / endAttributes / metrics.labels / lifecycle`，移除旧 API 主语义并完成仓库内迁移 [查看](./changelogs/v2.0.0.md) |
@@ -30,9 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Links
 
-- [Detailed Changelog File](./changelogs/v2.0.0.md)
+- [Detailed Changelog File](./changelogs/v2.1.0.md)
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.6...v2.0.0

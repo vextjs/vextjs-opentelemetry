@@ -154,12 +154,13 @@ describe("createExpressMiddleware", () => {
     expect(mockSpan.updateName).toHaveBeenCalledWith("GET /orders/:id");
   });
 
-  it("capture 可从 Express req 映射 query / params / body", () => {
+  it("capture 可从 Express req 映射 headers / query / params / body，并支持全量模式", () => {
     const mw = createExpressMiddleware({
       capture: {
+        headers: true,
         query: true,
         params: true,
-        body: ["orderNo"],
+        body: true,
       },
     });
     const next = vi.fn();
@@ -167,6 +168,13 @@ describe("createExpressMiddleware", () => {
     const req = makeReq({ route: { path: "/orders/:id" } as never });
 
     mw(req, res as Response, next);
+
+    expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "http.request.header.x-request-id": "req-001",
+      }),
+    );
+
     vi.clearAllMocks();
     res.emit("finish");
 

@@ -81,18 +81,39 @@ export type CaptureFieldSelection = string[] | Record<string, CaptureFieldRule>;
 /** 显式全量采集开关，仅用于 query / params 这类已归一化集合 */
 export type CaptureAllSelection = true | "*";
 
-/** query / params 允许在白名单之外显式开启全量模式 */
-export type CaptureCollectionSelection = CaptureAllSelection | CaptureFieldSelection;
+export interface CaptureSourceOptions {
+  /** 采集模式：allowlist（默认）/ all（显式全量） */
+  mode?: "allowlist" | "all";
+  /** 白名单字段；未指定时沿用简写 selection */
+  fields?: CaptureFieldSelection;
+  /** 排除字段或路径 */
+  exclude?: (string | RegExp)[];
+  /** 当前 source 的敏感字段规则；优先于全局 sensitiveKeys */
+  sensitiveKeys?: (string | RegExp)[];
+  /** 当前 source 的字符串截断长度；优先于全局 maxValueLength */
+  maxValueLength?: number;
+  /** 展开对象时的最大递归深度（主要用于 body） */
+  maxDepth?: number;
+  /** 展开数组时的最大元素数量（主要用于 body） */
+  maxItems?: number;
+  /** 兼容快捷开关：为 true 时等价于 output='both' */
+  snapshot?: boolean;
+  /** 输出形式：展开属性 / 原始快照 / 两者都输出 */
+  output?: "attributes" | "snapshot" | "both";
+}
+
+/** query / params / headers / body 的统一 capture 输入 */
+export type CaptureInput = CaptureAllSelection | CaptureFieldSelection | CaptureSourceOptions;
 
 export interface RequestCaptureOptions<TRaw = unknown> {
-  /** 请求头白名单；在 start 阶段采集 */
-  headers?: CaptureFieldSelection;
-  /** query 参数采集；支持白名单或显式全量模式（true / "*"） */
-  query?: CaptureCollectionSelection;
-  /** 路由参数采集；支持白名单或显式全量模式（true / "*"） */
-  params?: CaptureCollectionSelection;
-  /** body 字段白名单；在 end 阶段采集，且仅消费已解析 body */
-  body?: CaptureFieldSelection;
+  /** 请求头采集：支持白名单、显式全量与规则对象；在 start 阶段采集 */
+  headers?: CaptureInput;
+  /** query 参数采集：支持白名单、显式全量与规则对象 */
+  query?: CaptureInput;
+  /** 路由参数采集：支持白名单、显式全量与规则对象 */
+  params?: CaptureInput;
+  /** body 字段采集：支持白名单、显式全量与规则对象；在 end 阶段采集，且仅消费已解析 body */
+  body?: CaptureInput;
   /** 敏感字段命中规则；命中后默认写入 [REDACTED] */
   sensitiveKeys?: (string | RegExp)[];
   /** 全局字符串截断长度，默认 256 */

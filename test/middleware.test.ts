@@ -909,12 +909,12 @@ describe("createTracingMiddleware", () => {
   });
 
   describe("capture", () => {
-    it("支持 query/params 显式全量模式，并采集 body 白名单字段", async () => {
+    it("支持 query/params/body 显式全量模式", async () => {
       const middleware = createTracingMiddleware(createMockMetrics(), {
         capture: {
           query: true,
           params: true,
-          body: ["orderNo"],
+          body: true,
         },
       });
       const req = createMockReq({
