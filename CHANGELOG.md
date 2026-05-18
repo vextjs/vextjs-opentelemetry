@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Version | Date | Type | Key Theme |
 |---------|------|------|-----------|
 | [Unreleased] | — | — | — |
+| [2.0.2] | 2026-05-18 | Patch | Docker / 私有源兼容性回退：将 `@opentelemetry/auto-instrumentations-node` 临时回退到 `0.72.0`，锁文件同步刷新并保持 `verify` 全通过 [查看](./changelogs/v2.0.0.md) |
 | [2.0.1] | 2026-05-15 | Patch | `capture` 收口发布：`query/params` 显式全量采集、Koa/Egg 晚到字段修复、README 重构与依赖安全升级 [查看](./changelogs/v2.0.0.md) |
 | [2.0.0] | 2026-05-14 | Major | 统一公开配置模型：`startAttributes / endAttributes / metrics.labels / lifecycle`，移除旧 API 主语义并完成仓库内迁移 [查看](./changelogs/v2.0.0.md) |
 | [1.0.6] | 2026-05-14 | Patch | 兼容性与文档收口：异常路径 span name 对齐、README 导航与矩阵修正、`lateAttributes` / `verify` 发布收口 [查看](./changelogs/v1.0.6.md) |
@@ -31,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - [Detailed Changelog File](./changelogs/v2.0.0.md)
 
-[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/vextjs/vextjs-plugins/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.6...v2.0.0
 [1.0.6]: https://github.com/vextjs/vextjs-plugins/compare/v1.0.5...v1.0.6
