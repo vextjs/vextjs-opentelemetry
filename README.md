@@ -16,6 +16,7 @@
 - [先理解：4 个配置入口分别负责什么](#先理解4-个配置入口分别负责什么)
 - [我应该从哪里开始配置](#我应该从哪里开始配置)
 - [导出目标与 endpoint / protocol 规则](#导出目标与-endpoint--protocol-规则)
+  - [关闭上报速查](#关闭上报速查)
 - [`tracing` 与 `lifecycle` 到底有什么区别](#tracing-与-lifecycle-到底有什么区别)
 - [配置项完整说明](#配置项完整说明)
   - [`package.json vext.otel`](#packagejson-vextotel)
@@ -78,12 +79,12 @@ npm install @opentelemetry/instrumentation-http \
 
 这 4 个入口**不是一回事**。大多数“配了但不生效 / 不知道该写哪”的问题，都来自把它们混着理解。
 
-| 配置入口 | 负责什么 | 生效阶段 | 适用场景 | 不适合放什么 |
-|---|---|---|---|---|
-| `package.json vext.otel` | VextJS 预加载阶段的 SDK 初始配置 | **进程启动 / preload** | VextJS 需要从一开始就确定 `service.name`、导出目标、采样、metric 上报周期 | 请求级逻辑、Span 属性、access log |
-| `opentelemetryPlugin()` | VextJS 插件期的运行时配置与请求观测配置 | **plugin setup + request** | VextJS 中补充导出配置、桥接日志、配置 `tracing/metrics/lifecycle` | 不适合承担 preload 阶段才会生效的 Resource 语义 |
-| `initOtel()` | Egg / Koa 的 SDK 初始化 helper | **进程启动 / `--require`** | Egg / Koa 需要在任何模块加载前初始化 SDK | 请求级属性提取、access log、副作用逻辑 |
-| `HttpOtelOptions` | 各 HTTP 适配器的统一请求观测配置 | **request start / request end** | 配置 `tracing`、`metrics`、`lifecycle`、`logs` | SDK 启动参数（如采样率、metric reader 周期） |
+| 配置入口                 | 负责什么                                | 生效阶段                        | 适用场景                                                                  | 不适合放什么                                    |
+| ------------------------ | --------------------------------------- | ------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------- |
+| `package.json vext.otel` | VextJS 预加载阶段的 SDK 初始配置        | **进程启动 / preload**          | VextJS 需要从一开始就确定 `service.name`、导出目标、采样、metric 上报周期 | 请求级逻辑、Span 属性、access log               |
+| `opentelemetryPlugin()`  | VextJS 插件期的运行时配置与请求观测配置 | **plugin setup + request**      | VextJS 中补充导出配置、桥接日志、配置 `tracing/metrics/lifecycle`         | 不适合承担 preload 阶段才会生效的 Resource 语义 |
+| `initOtel()`             | Egg / Koa 的 SDK 初始化 helper          | **进程启动 / `--require`**      | Egg / Koa 需要在任何模块加载前初始化 SDK                                  | 请求级属性提取、access log、副作用逻辑          |
+| `HttpOtelOptions`        | 各 HTTP 适配器的统一请求观测配置        | **request start / request end** | 配置 `tracing`、`metrics`、`lifecycle`、`logs`                            | SDK 启动参数（如采样率、metric reader 周期）    |
 
 ### 一句话记忆
 
@@ -94,15 +95,15 @@ npm install @opentelemetry/instrumentation-http \
 
 ## 我应该从哪里开始配置
 
-| 你的目标 | 推荐入口 | 原因 |
-|---|---|---|
-| 想改 `service.name`、导出地址、采样率 | `package.json vext.otel`（VextJS）/ `initOtel()`（Egg/Koa）/ preload bootstrap（Express/Hono/Fastify） | 这些都属于 SDK 初始化层 |
-| 想给请求 Span 增加属性 | `tracing.startAttributes` / `tracing.endAttributes` | 这是观测数据本身 |
-| 想改 Span 名称 | `tracing.spanNameResolver` | 这是追踪主语义 |
-| 想打 access log、trace 关联日志 | `lifecycle.onEnd` | 这是请求结束副作用，不是 Span 属性 |
-| 想回写 `ctx` / `req` 字段 | `lifecycle.onStart` / `lifecycle.onEnd` | 这是运行时副作用 |
-| 想加指标标签 | `metrics.labels` | 这是指标维度配置，但必须低基数 |
-| 想桥接 VextJS 的 `app.logger` 到 OTel Logs | `logs.bridgeAppLogger` | 这是日志桥接，不属于 tracing |
+| 你的目标                                   | 推荐入口                                                                                               | 原因                               |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| 想改 `service.name`、导出地址、采样率      | `package.json vext.otel`（VextJS）/ `initOtel()`（Egg/Koa）/ preload bootstrap（Express/Hono/Fastify） | 这些都属于 SDK 初始化层            |
+| 想给请求 Span 增加属性                     | `tracing.startAttributes` / `tracing.endAttributes`                                                    | 这是观测数据本身                   |
+| 想改 Span 名称                             | `tracing.spanNameResolver`                                                                             | 这是追踪主语义                     |
+| 想打 access log、trace 关联日志            | `lifecycle.onEnd`                                                                                      | 这是请求结束副作用，不是 Span 属性 |
+| 想回写 `ctx` / `req` 字段                  | `lifecycle.onStart` / `lifecycle.onEnd`                                                                | 这是运行时副作用                   |
+| 想加指标标签                               | `metrics.labels`                                                                                       | 这是指标维度配置，但必须低基数     |
+| 想桥接 VextJS 的 `app.logger` 到 OTel Logs | `logs.bridgeAppLogger`                                                                                 | 这是日志桥接，不属于 tracing       |
 
 ---
 
@@ -110,11 +111,44 @@ npm install @opentelemetry/instrumentation-http \
 
 `endpoint` 在不同初始化入口里的语义**不完全一样**，尤其要分清 VextJS 与 Egg/Koa。
 
-| 场景 | 配置入口 | `host:port` 含义 | 其他说明 |
-| --- | --- | --- | --- |
+| 场景                   | 配置入口                                                                         | `host:port` 含义                                                                        | 其他说明                                                                               |
+| ---------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | VextJS 预加载 / plugin | `package.json vext.otel.endpoint`、`opentelemetryPlugin({ endpoint, protocol })` | 由 `protocol` 决定：`protocol: "grpc"` 时走 gRPC h2c；`protocol: "http"` 时走 OTLP HTTP | 当前默认 `protocol` 为 `"http"`，因此只写 `host:port` 且不显式改协议时，会按 HTTP 处理 |
-| Egg / Koa 手动初始化 | `initOtel({ endpoint })` | 默认走 gRPC h2c | `initOtel()` 不暴露单独 `protocol` 字段；只有写成 `http://...` 才会切到 OTLP HTTP |
-| 统一关闭导出 | `endpoint: "none"` 或不传 | 不上报 | 适合本地开发、测试或只想保留 Noop SDK |
+| Egg / Koa 手动初始化   | `initOtel({ endpoint })`                                                         | 默认走 gRPC h2c                                                                         | `initOtel()` 不暴露单独 `protocol` 字段；只有写成 `http://...` 才会切到 OTLP HTTP      |
+| 统一关闭导出           | `endpoint: "none"` 或不传                                                        | 不上报                                                                                  | 适合本地开发、测试或只想保留 Noop SDK                                                  |
+
+### 关闭上报速查
+
+如果目标是**不再向 Collector 上报 traces / metrics / logs**，请关闭 exporter：
+
+```json
+{
+  "vext": {
+    "otel": {
+      "endpoint": "none"
+    }
+  }
+}
+```
+
+同时确认插件阶段没有再补一个导出目标：
+
+```typescript
+export default opentelemetryPlugin({
+  endpoint: "none",
+});
+```
+
+`otel.enabled = false` 或 `opentelemetryPlugin({ enabled: false })` 只关闭 VextJS plugin setup：不会挂载请求观测中间件、`/_otel/status`、logger bridge，也不会执行 plugin 阶段的 `attachExporterToSdk()`。它不会回滚已经由 `vext.preload` / `--import vextjs-opentelemetry/instrumentation` 启动的 SDK。
+
+如果配置了 `enabled: false` 仍看到上报，请按这个顺序排查：
+
+1. `package.json` 是否仍有 `vext.otel.endpoint` 指向 Collector。
+2. `src/plugins/otel.ts` 是否仍有 `opentelemetryPlugin({ endpoint: "..." })`。
+3. 运行环境是否设置了 `OTEL_EXPORTER_OTLP_ENDPOINT`。
+4. 启动脚本或 `NODE_OPTIONS` 是否手动注入了 `--import vextjs-opentelemetry/instrumentation`。
+
+“不上报”和“完全不初始化 SDK”也不是同一件事。`endpoint: "none"` 会保留 SDK / Noop 或 deferred 状态，但不会配置 exporter；如果你想完全不执行 SDK 初始化，需要避免 VextJS 自动注入该包的 `vext.preload`，或不要把 `vextjs-opentelemetry` 作为当前 VextJS 应用的直接依赖。
 
 ### 为什么 Egg / Koa 默认偏向 gRPC h2c
 
@@ -143,12 +177,12 @@ npm install @opentelemetry/instrumentation-http \
 
 ### 对比表
 
-| 维度 | `tracing` | `lifecycle` |
-|---|---|---|
-| 本质 | Span / 观测数据配置 | 请求生命周期副作用 |
-| 典型能力 | `ignorePaths`、`spanNameResolver`、`startAttributes`、`endAttributes` | `onStart`、`onEnd` |
-| 适合做什么 | 改 Span 名、补 Span 属性、控制哪些请求被追踪 | 打 access log、回写 `ctx/req`、收尾动作 |
-| 不适合做什么 | 打日志、改业务上下文、写副作用 | 充当主要 Span 属性配置入口 |
+| 维度         | `tracing`                                                             | `lifecycle`                             |
+| ------------ | --------------------------------------------------------------------- | --------------------------------------- |
+| 本质         | Span / 观测数据配置                                                   | 请求生命周期副作用                      |
+| 典型能力     | `ignorePaths`、`spanNameResolver`、`startAttributes`、`endAttributes` | `onStart`、`onEnd`                      |
+| 适合做什么   | 改 Span 名、补 Span 属性、控制哪些请求被追踪                          | 打 access log、回写 `ctx/req`、收尾动作 |
+| 不适合做什么 | 打日志、改业务上下文、写副作用                                        | 充当主要 Span 属性配置入口              |
 
 ### 正确的心智模型
 
@@ -230,14 +264,14 @@ npm install @opentelemetry/instrumentation-http \
 }
 ```
 
-| 字段 | 作用 | 生效阶段 | 推荐场景 | 不推荐场景 | 常见误用 |
-|---|---|---|---|---|---|
-| `serviceName` | 写入 SDK Resource 的 `service.name` | preload | 希望从进程启动时就确定服务名 | 请求级逻辑 | 误以为只配 plugin 里的 `serviceName` 就能回写已启动的 Resource |
-| `endpoint` | 预加载阶段的导出目标 | preload | 希望启动摘要与最终导出目标从一开始一致 | 请求级 hook | 误把它当成 `tracing` 里的请求属性配置 |
-| `protocol` | VextJS preload 的导出协议 | preload | VextJS 明确需要 gRPC h2c 或 HTTP | Egg/Koa `initOtel()` | 误以为所有入口都支持单独 `protocol` 字段 |
-| `headers` | OTLP 导出请求头 | preload | 需要为 Collector 注入固定头 | 请求内动态 headers | 误以为这是要采集业务请求头 |
-| `sampling.ratio` | Trace 采样率 | preload | 需要在启动阶段控制采样 | 请求级 attribute | 误把它当“某个请求要不要采”的业务判断 |
-| `metricIntervalMs` | metric reader 导出周期 | preload | 需要统一 metric 推送节奏 | 请求级逻辑 | 误以为越小越好，忽略上报频率成本 |
+| 字段               | 作用                                | 生效阶段 | 推荐场景                               | 不推荐场景           | 常见误用                                                       |
+| ------------------ | ----------------------------------- | -------- | -------------------------------------- | -------------------- | -------------------------------------------------------------- |
+| `serviceName`      | 写入 SDK Resource 的 `service.name` | preload  | 希望从进程启动时就确定服务名           | 请求级逻辑           | 误以为只配 plugin 里的 `serviceName` 就能回写已启动的 Resource |
+| `endpoint`         | 预加载阶段的导出目标                | preload  | 希望启动摘要与最终导出目标从一开始一致 | 请求级 hook          | 误把它当成 `tracing` 里的请求属性配置                          |
+| `protocol`         | VextJS preload 的导出协议           | preload  | VextJS 明确需要 gRPC h2c 或 HTTP       | Egg/Koa `initOtel()` | 误以为所有入口都支持单独 `protocol` 字段                       |
+| `headers`          | OTLP 导出请求头                     | preload  | 需要为 Collector 注入固定头            | 请求内动态 headers   | 误以为这是要采集业务请求头                                     |
+| `sampling.ratio`   | Trace 采样率                        | preload  | 需要在启动阶段控制采样                 | 请求级 attribute     | 误把它当“某个请求要不要采”的业务判断                           |
+| `metricIntervalMs` | metric reader 导出周期              | preload  | 需要统一 metric 推送节奏               | 请求级逻辑           | 误以为越小越好，忽略上报频率成本                               |
 
 ### `opentelemetryPlugin()`
 
@@ -261,20 +295,21 @@ export default opentelemetryPlugin({
 });
 ```
 
-| 字段 | 作用 | 生效阶段 | 推荐场景 | 不推荐场景 | 常见误用 |
-|---|---|---|---|---|---|
-| `enabled` | 关闭 VextJS plugin setup | setup | 临时禁用当前应用 OTel plugin | 代替 SDK 级开关语义 | 误以为它能回滚 preload 已启动的 SDK |
-| `serviceName` | 影响运行期 tracer / meter / logger 命名 | setup | VextJS plugin 级命名 | 期望它回写 preload Resource | 误解为“它和 package.json 的 `serviceName` 完全等价” |
-| `endpoint` | setup 阶段追加/覆盖 exporter 目标 | setup | 运行期补充导出目标 | 请求级属性 | 误把它当成请求数据采集配置 |
-| `protocol` | setup 阶段 exporter 协议（VextJS 专属） | setup | 需要显式切 gRPC/HTTP | Egg/Koa | 误以为所有框架都支持此字段 |
-| `headers` | setup 阶段 OTLP 请求头 | setup | VextJS 运行时补 header | 请求级业务 header 采集 | 混淆“导出请求头”和“业务请求头” |
-| `insecure` | gRPC 连接方式（h2c/TLS） | setup | 区分内网 collector 与公网 TLS collector | HTTP 模式 | 忽略它只对 `protocol: "grpc"` 有意义 |
-| `resourceAttributes` | 兼容占位字段；当前 plugin 阶段不会重新写入 SDK Resource | setup | 仅用于说明兼容语义 | 依赖它在 plugin 阶段动态改 Resource | 误以为写了就会改变已启动 SDK 的 Resource |
-| `statusEndpoint` | 兼容占位；当前不支持自定义路径 | setup | 历史配置过渡说明 | 新项目自定义路径 | 误以为可以改默认 `/_otel/status` 路径 |
-| `tracing` / `metrics` / `lifecycle` / `logs` | 请求观测配置 | request | VextJS 请求期观测与日志桥接 | SDK 启动参数 | 把它们和 preload 配置混在一起理解 |
+| 字段                                         | 作用                                                    | 生效阶段 | 推荐场景                                | 不推荐场景                          | 常见误用                                            |
+| -------------------------------------------- | ------------------------------------------------------- | -------- | --------------------------------------- | ----------------------------------- | --------------------------------------------------- |
+| `enabled`                                    | 关闭 VextJS plugin setup                                | setup    | 临时禁用当前应用 OTel plugin            | 代替 SDK 级开关语义                 | 误以为它能回滚 preload 已启动的 SDK                 |
+| `serviceName`                                | 影响运行期 tracer / meter / logger 命名                 | setup    | VextJS plugin 级命名                    | 期望它回写 preload Resource         | 误解为“它和 package.json 的 `serviceName` 完全等价” |
+| `endpoint`                                   | setup 阶段追加/覆盖 exporter 目标                       | setup    | 运行期补充导出目标                      | 请求级属性                          | 误把它当成请求数据采集配置                          |
+| `protocol`                                   | setup 阶段 exporter 协议（VextJS 专属）                 | setup    | 需要显式切 gRPC/HTTP                    | Egg/Koa                             | 误以为所有框架都支持此字段                          |
+| `headers`                                    | setup 阶段 OTLP 请求头                                  | setup    | VextJS 运行时补 header                  | 请求级业务 header 采集              | 混淆“导出请求头”和“业务请求头”                      |
+| `insecure`                                   | gRPC 连接方式（h2c/TLS）                                | setup    | 区分内网 collector 与公网 TLS collector | HTTP 模式                           | 忽略它只对 `protocol: "grpc"` 有意义                |
+| `resourceAttributes`                         | 兼容占位字段；当前 plugin 阶段不会重新写入 SDK Resource | setup    | 仅用于说明兼容语义                      | 依赖它在 plugin 阶段动态改 Resource | 误以为写了就会改变已启动 SDK 的 Resource            |
+| `statusEndpoint`                             | 兼容占位；当前不支持自定义路径                          | setup    | 历史配置过渡说明                        | 新项目自定义路径                    | 误以为可以改默认 `/_otel/status` 路径               |
+| `tracing` / `metrics` / `lifecycle` / `logs` | 请求观测配置                                            | request  | VextJS 请求期观测与日志桥接             | SDK 启动参数                        | 把它们和 preload 配置混在一起理解                   |
 
 > `app.config.otel.enabled / serviceName / endpoint` 当前也会作为 VextJS plugin setup 的运行期 fallback 读取。
 > 但 `headers` 虽出现在类型声明中，当前运行期 fallback **未实际读取**；如果你要配导出 headers，请优先使用 `package.json vext.otel.headers` 或 `opentelemetryPlugin({ headers })`。
+> 如果要关闭 Collector 上报，请使用 [`endpoint: "none"`](#关闭上报速查)；`enabled: false` 只是关闭 plugin setup，不是 SDK 级总开关。
 
 ### `initOtel()`
 
@@ -294,60 +329,60 @@ initOtel({
 });
 ```
 
-| 字段 | 作用 | 生效阶段 | 推荐场景 | 不推荐场景 | 常见误用 |
-|---|---|---|---|---|---|
-| `serviceName` | Resource 的服务名 | preload | Egg/Koa 启动时统一服务名 | 请求级 hook | 误把它当中间件配置的一部分 |
-| `endpoint` | 导出目标 | preload | Egg/Koa collector 导出 | 请求采集逻辑 | 误以为 `host:port` 默认是 HTTP |
-| `headers` | OTLP 导出请求头 | preload | 需要为 exporter 注入固定 headers | 业务 header 采集 | 把 exporter header 和 request header 混为一谈 |
-| `instrumentations` | 额外自动埋点列表 | preload | 需要补 HTTP / DB / Redis instrumentation | 请求生命周期副作用 | 误以为这是 `HttpOtelOptions` 的一部分 |
-| `metricIntervalMs` | metrics 导出周期 | preload | 统一 metric 推送节奏 | 请求逻辑 | 忽略采集频率成本 |
+| 字段               | 作用              | 生效阶段 | 推荐场景                                 | 不推荐场景         | 常见误用                                      |
+| ------------------ | ----------------- | -------- | ---------------------------------------- | ------------------ | --------------------------------------------- |
+| `serviceName`      | Resource 的服务名 | preload  | Egg/Koa 启动时统一服务名                 | 请求级 hook        | 误把它当中间件配置的一部分                    |
+| `endpoint`         | 导出目标          | preload  | Egg/Koa collector 导出                   | 请求采集逻辑       | 误以为 `host:port` 默认是 HTTP                |
+| `headers`          | OTLP 导出请求头   | preload  | 需要为 exporter 注入固定 headers         | 业务 header 采集   | 把 exporter header 和 request header 混为一谈 |
+| `instrumentations` | 额外自动埋点列表  | preload  | 需要补 HTTP / DB / Redis instrumentation | 请求生命周期副作用 | 误以为这是 `HttpOtelOptions` 的一部分         |
+| `metricIntervalMs` | metrics 导出周期  | preload  | 统一 metric 推送节奏                     | 请求逻辑           | 忽略采集频率成本                              |
 
 ### `HttpOtelOptions.tracing`
 
 适用：**所有 HTTP 适配器共享的请求追踪配置**。
 
-| 字段 | 作用 | 生效阶段 | 推荐场景 | 不推荐场景 | 常见误用 |
-|---|---|---|---|---|---|
-| `enabled` | 开关 tracing | request | 局部禁用某组中间件追踪 | 代替 SDK 是否启动 | 误解为能停掉整个 SDK |
-| `ignorePaths` | 忽略指定路径 | request start | 健康检查、状态页、噪音路径 | 动态业务判断 | 把它当权限控制 |
-| `spanNameResolver` | 自定义 Span 名称 | request end | 需要使用 route 模板收敛 Span 名 | access log | 把日志格式化职责塞进这里 |
-| `startAttributes` | 请求开始阶段额外 Span 属性 | request start | 稳定请求头、租户、requestId、客户端来源 | 需要完整 raw ctx 的字段 | 在回调里做副作用、回写上下文 |
-| `endAttributes` | 请求结束阶段额外 Span 属性 | request end | `route/statusCode/latency/query/params/body` 等结束后更完整的信息 | access log / 业务副作用 | 在回调里打日志或修改 `ctx/req` |
+| 字段               | 作用                       | 生效阶段      | 推荐场景                                                          | 不推荐场景              | 常见误用                       |
+| ------------------ | -------------------------- | ------------- | ----------------------------------------------------------------- | ----------------------- | ------------------------------ |
+| `enabled`          | 开关 tracing               | request       | 局部禁用某组中间件追踪                                            | 代替 SDK 是否启动       | 误解为能停掉整个 SDK           |
+| `ignorePaths`      | 忽略指定路径               | request start | 健康检查、状态页、噪音路径                                        | 动态业务判断            | 把它当权限控制                 |
+| `spanNameResolver` | 自定义 Span 名称           | request end   | 需要使用 route 模板收敛 Span 名                                   | access log              | 把日志格式化职责塞进这里       |
+| `startAttributes`  | 请求开始阶段额外 Span 属性 | request start | 稳定请求头、租户、requestId、客户端来源                           | 需要完整 raw ctx 的字段 | 在回调里做副作用、回写上下文   |
+| `endAttributes`    | 请求结束阶段额外 Span 属性 | request end   | `route/statusCode/latency/query/params/body` 等结束后更完整的信息 | access log / 业务副作用 | 在回调里打日志或修改 `ctx/req` |
 
 ### `HttpOtelOptions.metrics`
 
-| 字段 | 作用 | 生效阶段 | 推荐场景 | 不推荐场景 | 常见误用 |
-|---|---|---|---|---|---|
-| `enabled` | 开关 HTTP 指标 | request | 某些场景只保留 tracing 不保留 metrics | 代替 SDK metrics reader 配置 | 误解为它能改 metric 导出周期 |
-| `durationBuckets` | 时长直方图分桶 | request end | 希望根据接口 SLA 调整桶边界 | 不清楚实际延迟分布时盲调 | 分桶设得过细导致观测噪音 |
-| `labels` | 附加指标标签 | request end | 少量、低基数业务维度 | user.id、query、full path、body | 把高基数字段塞进 metrics，导致成本膨胀 |
+| 字段              | 作用           | 生效阶段    | 推荐场景                              | 不推荐场景                      | 常见误用                               |
+| ----------------- | -------------- | ----------- | ------------------------------------- | ------------------------------- | -------------------------------------- |
+| `enabled`         | 开关 HTTP 指标 | request     | 某些场景只保留 tracing 不保留 metrics | 代替 SDK metrics reader 配置    | 误解为它能改 metric 导出周期           |
+| `durationBuckets` | 时长直方图分桶 | request end | 希望根据接口 SLA 调整桶边界           | 不清楚实际延迟分布时盲调        | 分桶设得过细导致观测噪音               |
+| `labels`          | 附加指标标签   | request end | 少量、低基数业务维度                  | user.id、query、full path、body | 把高基数字段塞进 metrics，导致成本膨胀 |
 
 ### `HttpOtelOptions.lifecycle`
 
-| 字段 | 作用 | 生效阶段 | 推荐场景 | 不推荐场景 | 常见误用 |
-|---|---|---|---|---|---|
-| `onStart` | 请求开始阶段副作用 | request start | 回写 `ctx/req`、准备上下文状态 | Span 属性返回 | 用它做主要 tracing 配置 |
-| `onEnd` | 请求结束阶段副作用 | request end | access log、trace 关联日志、收尾动作 | Span 名称 / 主属性配置 | 把它当 `endAttributes` 替代品 |
+| 字段      | 作用               | 生效阶段      | 推荐场景                             | 不推荐场景             | 常见误用                      |
+| --------- | ------------------ | ------------- | ------------------------------------ | ---------------------- | ----------------------------- |
+| `onStart` | 请求开始阶段副作用 | request start | 回写 `ctx/req`、准备上下文状态       | Span 属性返回          | 用它做主要 tracing 配置       |
+| `onEnd`   | 请求结束阶段副作用 | request end   | access log、trace 关联日志、收尾动作 | Span 名称 / 主属性配置 | 把它当 `endAttributes` 替代品 |
 
 ### `HttpOtelOptions.logs`
 
-| 字段 | 作用 | 生效阶段 | 推荐场景 | 不推荐场景 | 常见误用 |
-|---|---|---|---|---|---|
-| `globalAttributes` | 附加到通过适配器 log bridge 发出的全局日志属性 | request / emit | 应用级稳定字段，如 `app.version`、`deployment.environment` | 高变字段 | 把每次请求都变化的字段塞进 globalAttributes |
-| `bridgeAppLogger` | VextJS 中把 `app.logger` 桥接到 OTel Logs | setup / request | 希望框架日志自动进入 OTel Logs | 非 VextJS 适配器 | 误以为所有框架都有同名自动桥接 |
+| 字段               | 作用                                           | 生效阶段        | 推荐场景                                                   | 不推荐场景       | 常见误用                                    |
+| ------------------ | ---------------------------------------------- | --------------- | ---------------------------------------------------------- | ---------------- | ------------------------------------------- |
+| `globalAttributes` | 附加到通过适配器 log bridge 发出的全局日志属性 | request / emit  | 应用级稳定字段，如 `app.version`、`deployment.environment` | 高变字段         | 把每次请求都变化的字段塞进 globalAttributes |
+| `bridgeAppLogger`  | VextJS 中把 `app.logger` 桥接到 OTel Logs      | setup / request | 希望框架日志自动进入 OTel Logs                             | 非 VextJS 适配器 | 误以为所有框架都有同名自动桥接              |
 
 ---
 
 ## 常见采集诉求速查
 
-| 我想做什么 | 推荐入口 | 原因 | 注意事项 |
-|-----------|---------|------|---------|
-| 采请求头 | 优先 `capture.headers`；复杂场景再用 `tracing.startAttributes` / `tracing.endAttributes` | 高频场景可以声明式配置，特殊场景再回到 resolver | `headers` 仍只建议白名单；不要采 `authorization` / `cookie` |
-| 采 query / params / body | 优先 `capture.query / capture.params / capture.body` | 常见场景可声明式配置；请求结束阶段上下文更完整 | `query/params` 支持显式全量模式；`body` 仍只建议白名单 |
-| 打 access log | `lifecycle.onEnd` | 这是副作用，不是 Span 属性 | 不要塞进 `endAttributes` |
-| 回写 `ctx` / `req` 字段 | `lifecycle.onStart` / `lifecycle.onEnd` | 这是运行时副作用 | 不要用 attribute resolver 代替 |
-| 改 Span 名 | `tracing.spanNameResolver` | 直接作用于追踪主语义 | 不要用 `lifecycle` 模拟 |
-| 给指标补业务标签 | `metrics.labels` | 这是指标维度入口 | 只能放低基数字段 |
+| 我想做什么               | 推荐入口                                                                                 | 原因                                            | 注意事项                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------- |
+| 采请求头                 | 优先 `capture.headers`；复杂场景再用 `tracing.startAttributes` / `tracing.endAttributes` | 高频场景可以声明式配置，特殊场景再回到 resolver | `headers` 仍只建议白名单；不要采 `authorization` / `cookie` |
+| 采 query / params / body | 优先 `capture.query / capture.params / capture.body`                                     | 常见场景可声明式配置；请求结束阶段上下文更完整  | `query/params` 支持显式全量模式；`body` 仍只建议白名单      |
+| 打 access log            | `lifecycle.onEnd`                                                                        | 这是副作用，不是 Span 属性                      | 不要塞进 `endAttributes`                                    |
+| 回写 `ctx` / `req` 字段  | `lifecycle.onStart` / `lifecycle.onEnd`                                                  | 这是运行时副作用                                | 不要用 attribute resolver 代替                              |
+| 改 Span 名               | `tracing.spanNameResolver`                                                               | 直接作用于追踪主语义                            | 不要用 `lifecycle` 模拟                                     |
+| 给指标补业务标签         | `metrics.labels`                                                                         | 这是指标维度入口                                | 只能放低基数字段                                            |
 
 ### 不建议默认全量采集的原因
 
@@ -588,6 +623,7 @@ export default opentelemetryPlugin({
 ```
 
 > `opentelemetryPlugin({ serviceName })` 会影响运行期 tracer / meter / logger 命名；**真正写入 SDK Resource 的 `service.name`** 发生在 preload 阶段，因此若想从启动时就保持一致，优先把 `serviceName` 写到 `package.json vext.otel`。
+> 本地开发或临时停报时，把 `package.json vext.otel.endpoint` 和 plugin `endpoint` 都设为 `"none"`；只写 `otel.enabled: false` 不能阻止 preload 阶段已有 exporter 继续工作。
 
 VextJS 使用 `vext start` / `vext dev` 时，SDK 会通过 `vext.preload` 自动注入；自定义启动脚本时需手动加 `--import`：
 
@@ -627,7 +663,10 @@ initOtel({
 
 ```typescript
 // app/middleware/otel.ts
-import { createEggMiddleware, type EggContextLike } from "vextjs-opentelemetry/egg";
+import {
+  createEggMiddleware,
+  type EggContextLike,
+} from "vextjs-opentelemetry/egg";
 
 type AppEggContext = EggContextLike & {
   user_id?: string;
@@ -731,13 +770,13 @@ fastify.get("/_otel/status", () => getOtelStatus());
 
 ## 框架差异速查
 
-| 特性 | VextJS | Egg.js / Koa | Express / Hono / Fastify |
-|---|---|---|---|
-| SDK 初始化 | `--import`（自动/手动） | `--require otel-init.cjs` | `--import` 或应用自建 bootstrap/init 文件 |
-| exporter 配置位置 | `package.json vext.otel` / plugin options | `initOtel()` | 应用侧自行初始化 SDK |
-| 请求观测配置 | `opentelemetryPlugin({ tracing/metrics/lifecycle/logs })` | `createEggMiddleware()` / `createKoaMiddleware()` | `createXxxMiddleware()` |
-| `raw` 参数形态 | `req` | `ctx` | Express `{ req, res }` / Hono `c` / Fastify `{ request, reply }` |
-| logger bridge | `logs.bridgeAppLogger` | 应用层手动 | 应用层手动 |
+| 特性              | VextJS                                                    | Egg.js / Koa                                      | Express / Hono / Fastify                                         |
+| ----------------- | --------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
+| SDK 初始化        | `--import`（自动/手动）                                   | `--require otel-init.cjs`                         | `--import` 或应用自建 bootstrap/init 文件                        |
+| exporter 配置位置 | `package.json vext.otel` / plugin options                 | `initOtel()`                                      | 应用侧自行初始化 SDK                                             |
+| 请求观测配置      | `opentelemetryPlugin({ tracing/metrics/lifecycle/logs })` | `createEggMiddleware()` / `createKoaMiddleware()` | `createXxxMiddleware()`                                          |
+| `raw` 参数形态    | `req`                                                     | `ctx`                                             | Express `{ req, res }` / Hono `c` / Fastify `{ request, reply }` |
+| logger bridge     | `logs.bridgeAppLogger`                                    | 应用层手动                                        | 应用层手动                                                       |
 
 ### `/_otel/status` 说明
 
@@ -751,13 +790,13 @@ fastify.get("/_otel/status", () => getOtelStatus());
 
 > ⚠️ **命名说明**：OTLP 中所有字段名遵循 OTel 语义约定，使用点分隔（`.`）。表中同时给出 OTLP 原始名称和 Prometheus 端转换后的查询名称，详见下方[字段命名约定](#字段命名约定)。
 
-| OTLP 指标名 | Prometheus 查询名 | 类型 | OTLP 属性键 | Prometheus 标签键 |
-|---|---|---|---|---|
-| `http.server.duration` | `http_server_duration` | Histogram (ms) | `http.method` / `http.status_code` / `http.route` | `http_method` / `http_status_code` / `http_route` |
-| `http.server.request.total` | `http_server_request_total` | Counter | `http.method` / `http.status_code` / `http.route` | `http_method` / `http_status_code` / `http_route` |
-| `http.server.active_requests` | `http_server_active_requests` | UpDownCounter | `http.method` | `http_method` |
-| `http.server.request.size` | `http_server_request_size` | Histogram (bytes) | `http.method` | `http_method` |
-| `http.server.response.size` | `http_server_response_size` | Histogram (bytes) | `http.method` / `http.status_code` | `http_method` / `http_status_code` |
+| OTLP 指标名                   | Prometheus 查询名             | 类型              | OTLP 属性键                                       | Prometheus 标签键                                 |
+| ----------------------------- | ----------------------------- | ----------------- | ------------------------------------------------- | ------------------------------------------------- |
+| `http.server.duration`        | `http_server_duration`        | Histogram (ms)    | `http.method` / `http.status_code` / `http.route` | `http_method` / `http_status_code` / `http_route` |
+| `http.server.request.total`   | `http_server_request_total`   | Counter           | `http.method` / `http.status_code` / `http.route` | `http_method` / `http_status_code` / `http_route` |
+| `http.server.active_requests` | `http_server_active_requests` | UpDownCounter     | `http.method`                                     | `http_method`                                     |
+| `http.server.request.size`    | `http_server_request_size`    | Histogram (bytes) | `http.method`                                     | `http_method`                                     |
+| `http.server.response.size`   | `http_server_response_size`   | Histogram (bytes) | `http.method` / `http.status_code`                | `http_method` / `http_status_code`                |
 
 > 额外自定义标签请通过 `metrics.labels` 提供，并保持**低基数**。
 
@@ -767,11 +806,11 @@ fastify.get("/_otel/status", () => getOtelStatus());
 
 OTLP 协议本身保留点分隔命名（`http.status_code`），但导出到不同后端时会发生**自动转换**：
 
-| 后端 | 转换规则 | 示例 |
-|---|---|---|
-| Prometheus / Grafana | `.` → `_` | `http.status_code` → `http_status_code`；`http.server.duration` → `http_server_duration` |
-| Jaeger / Zipkin | 保持原样（`.` 分隔） | `http.status_code` 不变 |
-| ClickHouse / Tempo | 通常保持原样，视采集器配置而定 | — |
+| 后端                 | 转换规则                       | 示例                                                                                     |
+| -------------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| Prometheus / Grafana | `.` → `_`                      | `http.status_code` → `http_status_code`；`http.server.duration` → `http_server_duration` |
+| Jaeger / Zipkin      | 保持原样（`.` 分隔）           | `http.status_code` 不变                                                                  |
+| ClickHouse / Tempo   | 通常保持原样，视采集器配置而定 | —                                                                                        |
 
 此转换由 **OTLP Exporter / Collector / 后端** 在写入时自动完成，SDK 侧不做转换。
 
@@ -784,8 +823,8 @@ OTLP 协议本身保留点分隔命名（`http.status_code`），但导出到不
 const options = {
   metrics: {
     labels: (_ctx, raw) => ({
-      "tenant.id": raw.get?.("x-tenant-id") ?? "",   // 点分隔
-      "app.version": "1.2.0",                         // 点分隔
+      "tenant.id": raw.get?.("x-tenant-id") ?? "", // 点分隔
+      "app.version": "1.2.0", // 点分隔
     }),
   },
 };
@@ -817,9 +856,13 @@ const paymentResult = await withSpan("payment.process", async (span) => {
   return res;
 });
 
-const paymentResultWithAttrs = await withSpan("payment.process", () => processPayment(body), {
-  attributes: { "payment.provider": "stripe" },
-});
+const paymentResultWithAttrs = await withSpan(
+  "payment.process",
+  () => processPayment(body),
+  {
+    attributes: { "payment.provider": "stripe" },
+  },
+);
 
 const traceId = getActiveTraceId(); // 无 active span 时返回 ''
 
@@ -836,7 +879,6 @@ console.log(getOtelStatus());
 ```
 
 ---
-
 
 ---
 
