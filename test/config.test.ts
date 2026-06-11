@@ -64,6 +64,8 @@ describe("resolveOtelConfig", () => {
       vext: {
         otel: {
           serviceName: "package-service",
+          enabled: false,
+          preloadSdk: true,
           endpoint: "collector:4317",
           protocol: "grpc",
           headers: {
@@ -80,6 +82,8 @@ describe("resolveOtelConfig", () => {
     try {
       const config = resolveOtelConfig();
       expect(config).toEqual({
+        enabled: false,
+        preloadSdk: true,
         serviceName: "package-service",
         endpoint: "collector:4317",
         protocol: "grpc",

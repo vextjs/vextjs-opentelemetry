@@ -1,6 +1,6 @@
 {
   "name": "vextjs-opentelemetry",
-  "version": "2.1.10",
+  "version": "2.1.11",
   "description": "Framework-agnostic OpenTelemetry SDK wrapper — zero-config traces, metrics, Span API and multi-framework adapters",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -81,7 +81,7 @@
     "@grpc/grpc-js": "1.14.3",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.214.0",
-    "@opentelemetry/auto-instrumentations-node": "0.72.0",
+    "@opentelemetry/auto-instrumentations-node": "0.76.0",
     "@opentelemetry/core": "2.6.1",
     "@opentelemetry/exporter-logs-otlp-grpc": "0.214.0",
     "@opentelemetry/exporter-logs-otlp-http": "0.214.0",
@@ -135,11 +135,11 @@
     "esbuild": "0.27.4",
     "express": "5.2.1",
     "fastify": "5.8.5",
-    "hono": "4.12.18",
+    "hono": "4.12.25",
     "koa": "3.2.0",
     "prettier": "3.8.1",
     "typescript": "5.9.3",
     "vextjs": "0.3.5",
-    "vitest": "3.2.4"
+    "vitest": "3.2.6"
   }
 }

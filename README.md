@@ -49,6 +49,7 @@
 - **日志关联** — 自动将 `trace_id` 注入每条请求日志
 - **gRPC h2c** — 原生 `node:http2` 实现，兼容自建 Jaeger / K8s OTel Collector
 - **优雅降级** — SDK 未初始化时以 Noop 模式运行，零 overhead
+- **轻量预加载** — VextJS 自动 preload 默认延后 SDK/exporter 到 plugin setup，支持 `enabled:false` 和标准 `OTEL_SDK_DISABLED=true` 早退
 - **多框架** — VextJS / Egg.js / Koa / Express / Hono / Fastify
 
 ---
@@ -139,16 +140,12 @@ export default opentelemetryPlugin({
 });
 ```
 
-`otel.enabled = false` 或 `opentelemetryPlugin({ enabled: false })` 只关闭 VextJS plugin setup：不会挂载请求观测中间件、`/_otel/status`、logger bridge，也不会执行 plugin 阶段的 `attachExporterToSdk()`。它不会回滚已经由 `vext.preload` / `--import vextjs-opentelemetry/instrumentation` 启动的 SDK。
+VextJS 自动 preload 场景下，默认不会抢先根据 `package.json vext.otel.endpoint` 启动完整 SDK/exporter；真正的 SDK 启动与 exporter 配置会延后到 `opentelemetryPlugin()` setup 阶段。因此：
 
-如果配置了 `enabled: false` 仍看到上报，请按这个顺序排查：
-
-1. `package.json` 是否仍有 `vext.otel.endpoint` 指向 Collector。
-2. `src/plugins/otel.ts` 是否仍有 `opentelemetryPlugin({ endpoint: "..." })`。
-3. 运行环境是否设置了 `OTEL_EXPORTER_OTLP_ENDPOINT`。
-4. 启动脚本或 `NODE_OPTIONS` 是否手动注入了 `--import vextjs-opentelemetry/instrumentation`。
-
-“不上报”和“完全不初始化 SDK”也不是同一件事。`endpoint: "none"` 会保留 SDK / Noop 或 deferred 状态，但不会配置 exporter；如果你想完全不执行 SDK 初始化，需要避免 VextJS 自动注入该包的 `vext.preload`，或不要把 `vextjs-opentelemetry` 作为当前 VextJS 应用的直接依赖。
+- `app.config.otel.enabled=false` 或 `opentelemetryPlugin({ enabled: false })` 会阻止插件阶段启动 SDK、挂载请求观测、注册 `/_otel/status` 和 logger bridge。
+- `package.json vext.otel.enabled=false`、`VEXT_OTEL_DISABLED=1`、`VEXT_OTEL_PRELOAD=0` 或 `OTEL_SDK_DISABLED=true` 会在 preload 阶段直接早退，不加载完整 OTel SDK。
+- 如果你确实需要进程最早期 SDK / auto-instrumentation，请显式设置 `package.json vext.otel.preloadSdk=true` 或 `VEXT_OTEL_FORCE_SDK=1`。启用后，这段初始化早于 `src/config/default.ts`，因此后者无法再回滚已经启动的 SDK/exporter。
+- 非 Vext 手动 `node --import vextjs-opentelemetry/instrumentation ...` 场景保持独立心智模型：有有效 endpoint 时会在 preload 阶段启动 SDK；`endpoint:"none"` 且无强制 SDK/auto-instrumentation 信号时保持 noop。
 
 ### 为什么 Egg / Koa 默认偏向 gRPC h2c
 
@@ -252,6 +249,8 @@ export default opentelemetryPlugin({
   "vext": {
     "otel": {
       "serviceName": "admin",
+      "enabled": true,
+      "preloadSdk": false,
       "endpoint": "47.89.182.109:32767",
       "protocol": "grpc",
       "headers": {
@@ -266,9 +265,11 @@ export default opentelemetryPlugin({
 
 | 字段               | 作用                                | 生效阶段 | 推荐场景                               | 不推荐场景           | 常见误用                                                       |
 | ------------------ | ----------------------------------- | -------- | -------------------------------------- | -------------------- | -------------------------------------------------------------- |
-| `serviceName`      | 写入 SDK Resource 的 `service.name` | preload  | 希望从进程启动时就确定服务名           | 请求级逻辑           | 误以为只配 plugin 里的 `serviceName` 就能回写已启动的 Resource |
-| `endpoint`         | 预加载阶段的导出目标                | preload  | 希望启动摘要与最终导出目标从一开始一致 | 请求级 hook          | 误把它当成 `tracing` 里的请求属性配置                          |
-| `protocol`         | VextJS preload 的导出协议           | preload  | VextJS 明确需要 gRPC h2c 或 HTTP       | Egg/Koa `initOtel()` | 误以为所有入口都支持单独 `protocol` 字段                       |
+| `serviceName`      | 写入 SDK Resource 的 `service.name` | preload / setup fallback | 希望从进程启动时就确定服务名 | 请求级逻辑 | 误以为只配 plugin 里的 `serviceName` 就能回写已启动的 Resource |
+| `enabled`          | package/preload 层总开关            | preload / setup fallback | 希望禁用当前 Vext 应用的 OTel SDK 与 plugin fallback | 请求级开关 | 误以为只关 plugin 但仍想使用 package endpoint |
+| `preloadSdk`       | Vext 自动 preload 是否抢先启动完整 SDK | preload | 需要进程最早期 SDK / auto-instrumentation | 普通请求观测 | 忽略它早于 `src/config/default.ts` 加载 |
+| `endpoint`         | 导出目标；Vext 自动 preload 默认延后到 plugin setup | preload / setup fallback | 配置统一导出目标 | 请求级 hook | 误把它当成 `tracing` 里的请求属性配置 |
+| `protocol`         | VextJS 导出协议                     | preload / setup fallback | VextJS 明确需要 gRPC h2c 或 HTTP | Egg/Koa `initOtel()` | 误以为所有入口都支持单独 `protocol` 字段 |
 | `headers`          | OTLP 导出请求头                     | preload  | 需要为 Collector 注入固定头            | 请求内动态 headers   | 误以为这是要采集业务请求头                                     |
 | `sampling.ratio`   | Trace 采样率                        | preload  | 需要在启动阶段控制采样                 | 请求级 attribute     | 误把它当“某个请求要不要采”的业务判断                           |
 | `metricIntervalMs` | metric reader 导出周期              | preload  | 需要统一 metric 推送节奏               | 请求级逻辑           | 误以为越小越好，忽略上报频率成本                               |
@@ -307,9 +308,9 @@ export default opentelemetryPlugin({
 | `statusEndpoint`                             | 兼容占位；当前不支持自定义路径                          | setup    | 历史配置过渡说明                        | 新项目自定义路径                    | 误以为可以改默认 `/_otel/status` 路径               |
 | `tracing` / `metrics` / `lifecycle` / `logs` | 请求观测配置                                            | request  | VextJS 请求期观测与日志桥接             | SDK 启动参数                        | 把它们和 preload 配置混在一起理解                   |
 
-> `app.config.otel.enabled / serviceName / endpoint` 当前也会作为 VextJS plugin setup 的运行期 fallback 读取。
-> 但 `headers` 虽出现在类型声明中，当前运行期 fallback **未实际读取**；如果你要配导出 headers，请优先使用 `package.json vext.otel.headers` 或 `opentelemetryPlugin({ headers })`。
-> 如果要关闭 Collector 上报，请使用 [`endpoint: "none"`](#关闭上报速查)；`enabled: false` 只是关闭 plugin setup，不是 SDK 级总开关。
+> `app.config.otel.enabled / serviceName / endpoint / protocol / headers` 会作为 VextJS plugin setup 的运行期 fallback 读取。
+> 在默认 Vext 自动 preload 模式下，`app.config.otel.enabled=false` 能阻止实际 SDK/exporter 启动；只有显式 `preloadSdk=true` / `VEXT_OTEL_FORCE_SDK=1` 的进程最早期 SDK 场景早于 `default.ts`。
+> 如果要关闭 Collector 上报，请使用 [`endpoint: "none"`](#关闭上报速查) 或 `enabled:false`；如果要在 preload 阶段完全早退，可使用 `package.json vext.otel.enabled=false`、`VEXT_OTEL_DISABLED=1` 或 `OTEL_SDK_DISABLED=true`。
 
 ### `initOtel()`
 
@@ -622,10 +623,10 @@ export default opentelemetryPlugin({
 });
 ```
 
-> `opentelemetryPlugin({ serviceName })` 会影响运行期 tracer / meter / logger 命名；**真正写入 SDK Resource 的 `service.name`** 发生在 preload 阶段，因此若想从启动时就保持一致，优先把 `serviceName` 写到 `package.json vext.otel`。
-> 本地开发或临时停报时，把 `package.json vext.otel.endpoint` 和 plugin `endpoint` 都设为 `"none"`；只写 `otel.enabled: false` 不能阻止 preload 阶段已有 exporter 继续工作。
+> `opentelemetryPlugin({ serviceName })` 会影响运行期 tracer / meter / logger 命名。默认 Vext 自动 preload 会延后 SDK/exporter 到 plugin setup，因此 `package.json vext.otel` 可作为 plugin fallback；如果显式 `preloadSdk=true`，SDK Resource 会在 preload 阶段固定，建议同时在 package 配置中写 `serviceName`。
+> 本地开发或临时停报时，可设置 `app.config.otel.enabled=false`、`opentelemetryPlugin({ enabled:false })`、`package.json vext.otel.enabled=false` 或 `OTEL_SDK_DISABLED=true`；需要完全跳过 Vext package preload 时可加 `VEXT_OTEL_PRELOAD=0`。
 
-VextJS 使用 `vext start` / `vext dev` 时，SDK 会通过 `vext.preload` 自动注入；自定义启动脚本时需手动加 `--import`：
+VextJS 使用 `vext start` / `vext dev` 时，instrumentation 会通过 `vext.preload` 自动注入；自定义启动脚本时需手动加 `--import`：
 
 ```json
 {

@@ -12,6 +12,9 @@ const {
   mockGetTracer,
   mockGetMeter,
   mockSpan,
+  mockAttachExporterToSdk,
+  mockResolvePackageOtelConfig,
+  mockStartOtelSdk,
 } = vi.hoisted(() => {
   const tracer = {
     startSpan: vi.fn(),
@@ -41,6 +44,9 @@ const {
     mockGetTracer: vi.fn(() => tracer),
     mockGetMeter: vi.fn(() => meter),
     mockSpan: span,
+    mockAttachExporterToSdk: vi.fn(() => Promise.resolve()),
+    mockResolvePackageOtelConfig: vi.fn(() => ({})),
+    mockStartOtelSdk: vi.fn(() => Promise.resolve()),
   };
 });
 
@@ -58,6 +64,18 @@ vi.mock("vextjs", () => ({
   requestContext: { getStore: vi.fn(() => null) },
 }));
 
+vi.mock("../src/core/config.js", () => ({
+  resolvePackageOtelConfig: mockResolvePackageOtelConfig,
+}));
+
+vi.mock("../src/core/sdk-config.js", () => ({
+  attachExporterToSdk: mockAttachExporterToSdk,
+}));
+
+vi.mock("../src/core/sdk-start.js", () => ({
+  startOtelSdk: mockStartOtelSdk,
+}));
+
 // ── 被测模块（在 mock 声明之后 import）────────────────────────────────────
 
 import { opentelemetryPlugin } from "../src/adapters/vextjs.js";
@@ -67,6 +85,10 @@ import type { OtelAppExtension } from "../src/core/types.js";
 interface MockOtelConfig {
   serviceName?: string;
   enabled?: boolean;
+  endpoint?: string;
+  protocol?: "http" | "grpc";
+  headers?: Record<string, string>;
+  insecure?: boolean;
 }
 
 type MockLogger = VextLogger & {
@@ -134,6 +156,11 @@ function getMountedOtel(app: MockPluginApp): OtelAppExtension {
 describe("opentelemetryPlugin", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolvePackageOtelConfig.mockReturnValue({});
+    delete process.env.OTEL_SDK_DISABLED;
+    delete process.env.VEXT_OTEL_DISABLED;
+    delete process.env.VEXT_OTEL_PRELOAD;
+    delete process.env.VEXT_OTEL_SDK_STARTED;
   });
 
   afterEach(() => {
@@ -200,6 +227,63 @@ describe("opentelemetryPlugin", () => {
         await opentelemetryPlugin({ enabled: false }).setup(app);
 
       expect(app.extend).not.toHaveBeenCalled();
+    });
+
+    it("package vext.otel.enabled: false → 不启动 SDK 或挂载插件", async () => {
+      mockResolvePackageOtelConfig.mockReturnValue({
+        enabled: false,
+        endpoint: "file",
+      });
+      const app = createMockApp();
+
+      await opentelemetryPlugin().setup(app);
+
+      expect(mockStartOtelSdk).not.toHaveBeenCalled();
+      expect(mockAttachExporterToSdk).not.toHaveBeenCalled();
+      expect(app.extend).not.toHaveBeenCalled();
+    });
+
+    it("package enabled=false 仍优先于 VEXT_OTEL_PRELOAD=0", async () => {
+      process.env.VEXT_OTEL_PRELOAD = "0";
+      mockResolvePackageOtelConfig.mockReturnValue({
+        enabled: false,
+        endpoint: "file",
+      });
+      const app = createMockApp();
+
+      await opentelemetryPlugin().setup(app);
+
+      expect(mockStartOtelSdk).not.toHaveBeenCalled();
+      expect(mockAttachExporterToSdk).not.toHaveBeenCalled();
+      expect(app.extend).not.toHaveBeenCalled();
+    });
+
+    it("OTEL_SDK_DISABLED=true → 不启动 SDK 或挂载插件", async () => {
+      process.env.OTEL_SDK_DISABLED = "true";
+      const app = createMockApp();
+
+      await opentelemetryPlugin({ endpoint: "file" }).setup(app);
+
+      expect(mockStartOtelSdk).not.toHaveBeenCalled();
+      expect(mockAttachExporterToSdk).not.toHaveBeenCalled();
+      expect(app.extend).not.toHaveBeenCalled();
+    });
+
+    it("VEXT_OTEL_PRELOAD=0 只关闭 package preload，不禁用 plugin setup", async () => {
+      process.env.VEXT_OTEL_PRELOAD = "0";
+      const app = createMockApp();
+
+      await opentelemetryPlugin({ endpoint: "file" }).setup(app);
+
+      expect(mockStartOtelSdk).toHaveBeenCalledOnce();
+      expect(mockAttachExporterToSdk).toHaveBeenCalledWith({
+        endpoint: "file",
+        protocol: "http",
+        headers: undefined,
+        insecure: undefined,
+        serviceName: "vext-app",
+      });
+      expect(app.extend).toHaveBeenCalledOnce();
     });
 
     it("disabled 模式不调用 trace.getTracer", async () => {
@@ -278,6 +362,68 @@ describe("opentelemetryPlugin", () => {
 
       // extend → registerRoute(status) → use(tracing)
       expect(callOrder).toEqual(["extend", "registerRoute", "use"]);
+    });
+  });
+
+  describe("SDK exporter 启动", () => {
+    it("package endpoint fallback 在 SDK 未启动时先启动 SDK 再 attach exporter", async () => {
+      mockResolvePackageOtelConfig.mockReturnValue({
+        serviceName: "package-service",
+        endpoint: "file",
+        protocol: "http",
+        headers: { authorization: "Bearer package" },
+        samplingRatio: 0.5,
+        metricIntervalMs: 5000,
+      });
+      const app = createMockApp();
+
+      await opentelemetryPlugin().setup(app);
+
+      expect(mockStartOtelSdk).toHaveBeenCalledWith({
+        enabled: true,
+        serviceName: "package-service",
+        endpoint: "none",
+        protocol: "http",
+        headers: undefined,
+        sampling: { ratio: 0.5 },
+        metricIntervalMs: 5000,
+      });
+      expect(mockAttachExporterToSdk).toHaveBeenCalledWith({
+        endpoint: "file",
+        protocol: "http",
+        headers: { authorization: "Bearer package" },
+        insecure: undefined,
+        serviceName: "package-service",
+      });
+    });
+
+    it("SDK 已启动时只追加 exporter", async () => {
+      process.env.VEXT_OTEL_SDK_STARTED = "1";
+      const app = createMockApp({ endpoint: "file", protocol: "http" });
+
+      await opentelemetryPlugin().setup(app);
+
+      expect(mockAttachExporterToSdk).toHaveBeenCalledWith({
+        endpoint: "file",
+        protocol: "http",
+        headers: undefined,
+        insecure: undefined,
+        serviceName: "vext-app",
+      });
+      expect(mockStartOtelSdk).not.toHaveBeenCalled();
+    });
+
+    it("app.config.otel.enabled=false 时 package endpoint 不会启动 SDK", async () => {
+      mockResolvePackageOtelConfig.mockReturnValue({
+        serviceName: "package-service",
+        endpoint: "file",
+      });
+      const app = createMockApp({ enabled: false });
+
+      await opentelemetryPlugin().setup(app);
+
+      expect(mockStartOtelSdk).not.toHaveBeenCalled();
+      expect(mockAttachExporterToSdk).not.toHaveBeenCalled();
     });
   });
 

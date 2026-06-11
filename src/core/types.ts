@@ -212,6 +212,10 @@ export type ExportMode = "none" | "file" | "otlp-http" | "otlp-grpc";
 
 /** instrumentation.ts 读取并使用的完整 SDK 配置 */
 export interface OtelConfig {
+  /** SDK 总开关；package.json vext.otel.enabled=false 时为 false */
+  enabled?: boolean;
+  /** Vext 自动 preload 场景下是否显式启用进程最早期 SDK */
+  preloadSdk?: boolean;
   serviceName: string;
   endpoint: string;
   /** 上报协议：http（默认）或 grpc */

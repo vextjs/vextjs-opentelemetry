@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version      | Date       | Type  | Key Theme                                                                                                                                                          |
 | ------------ | ---------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Unreleased] | —          | —     | —                                                                                                                                                                  |
+| [Unreleased] | —          | —     | Pending changes                                                                                                                                                    |
+| [2.1.11]     | 2026-06-11 | Patch | VextJS 自动 preload 延后完整 SDK/exporter，修复禁用后仍可能启动/上报，并升级 OTel auto-instrumentations 安全依赖 [查看](./changelogs/v2.1.11.md)                   |
 | [2.1.10]     | 2026-06-09 | Patch | 固定 runtime 与 dev direct dependencies 为 lockfile 已解析精确版本，降低消费者安装时的依赖漂移风险 [查看](./changelogs/v2.1.10.md)                                |
 | [2.1.9]      | 2026-06-08 | Patch | 文档补强：明确 `enabled:false` 与 `endpoint:"none"` 的关闭上报边界，并修正当前仓库 compare 链接口径                                                                |
 | [2.1.0]      | 2026-05-18 | Minor | `capture` 能力增强：四类输入统一支持显式全量、规则对象控制、body flatten/snapshot 与 `maxItems`/`output` 护栏 [查看](./changelogs/v2.1.0.md)                       |
@@ -35,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - [Detailed Changelog File](./changelogs/v2.1.0.md)
 
-[Unreleased]: https://github.com/vextjs/vextjs-opentelemetry/compare/v2.1.10...HEAD
+[Unreleased]: https://github.com/vextjs/vextjs-opentelemetry/compare/v2.1.11...HEAD
+[2.1.11]: https://github.com/vextjs/vextjs-opentelemetry/compare/v2.1.10...v2.1.11
 [2.1.10]: https://github.com/vextjs/vextjs-opentelemetry/compare/v2.1.9...v2.1.10
 [2.1.9]: https://github.com/vextjs/vextjs-opentelemetry/compare/v2.1.8...v2.1.9
 [2.1.0]: https://github.com/vextjs/vextjs-opentelemetry/compare/v2.0.2...v2.1.0

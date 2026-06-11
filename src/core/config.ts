@@ -13,12 +13,26 @@ import { join } from "node:path";
 import type { OtelConfig } from "./types.js";
 import { DEFAULT_SERVICE_NAME } from "./types.js";
 
-interface PackageJsonOtelConfig {
+export interface PackageJsonOtelConfig {
+  enabled?: boolean;
+  preloadSdk?: boolean;
   serviceName?: string;
   endpoint?: string;
   protocol?: string;
   headers?: Record<string, string>;
   sampling?: { ratio?: number };
+  metricIntervalMs?: number;
+}
+
+export interface ResolvedPackageOtelConfig {
+  packageName?: string;
+  enabled?: boolean;
+  preloadSdk?: boolean;
+  serviceName?: string;
+  endpoint?: string;
+  protocol?: "http" | "grpc";
+  headers?: Record<string, string>;
+  samplingRatio?: number;
   metricIntervalMs?: number;
 }
 
@@ -82,7 +96,7 @@ function readAppPackageJson(): AppPackageJson | undefined {
   }
 }
 
-function resolvePackageOtelConfig() {
+export function resolvePackageOtelConfig(): ResolvedPackageOtelConfig {
   const packageJson = readAppPackageJson();
   const packageOtel = packageJson?.vext?.otel;
   const packageName =
@@ -103,6 +117,14 @@ function resolvePackageOtelConfig() {
 
   return {
     packageName,
+    enabled:
+      typeof packageOtel?.enabled === "boolean"
+        ? packageOtel.enabled
+        : undefined,
+    preloadSdk:
+      typeof packageOtel?.preloadSdk === "boolean"
+        ? packageOtel.preloadSdk
+        : undefined,
     serviceName: packageOtel?.serviceName,
     endpoint: packageOtel?.endpoint,
     protocol: resolveProtocol(packageOtel?.protocol),
@@ -164,6 +186,8 @@ export function resolveOtelConfig(): OtelConfig {
   })();
 
   return {
+    enabled: packageConfig.enabled,
+    preloadSdk: packageConfig.preloadSdk,
     serviceName,
     endpoint,
     protocol,

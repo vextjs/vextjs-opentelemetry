@@ -17,6 +17,8 @@ import {
   normalizeQueryRecord,
   resolveCapturedAttributes,
 } from "../core/http-core.js";
+import { resolvePackageOtelConfig } from "../core/config.js";
+import { resolvePreloadGate } from "../core/preload-gate.js";
 import { withSpan, getOtelStatus, getActiveTraceId, getOtelLogger } from "../core/span.js";
 import { attachExporterToSdk } from "../core/sdk-config.js";
 import { createOtelLogBridge } from "../log.js";
@@ -143,7 +145,9 @@ declare module "vextjs" {
       serviceName?: string;
       enabled?: boolean;
       endpoint?: string;
+      protocol?: "http" | "grpc";
       headers?: Record<string, string>;
+      insecure?: boolean;
     };
   }
 }
@@ -488,24 +492,62 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
     name: "opentelemetry",
 
     async setup(app) {
-      if (options.enabled === false || app.config.otel?.enabled === false) {
+      const packageConfig = resolvePackageOtelConfig();
+      const preloadGate = resolvePreloadGate({ enabled: packageConfig.enabled });
+      const packageOtelDisabled = packageConfig.enabled === false;
+      const pluginDisabledByGate =
+        preloadGate.disabled && preloadGate.reason !== "vext-preload-disabled";
+
+      if (
+        options.enabled === false ||
+        app.config.otel?.enabled === false ||
+        packageOtelDisabled ||
+        pluginDisabledByGate
+      ) {
         app.logger.debug("[vextjs-opentelemetry] disabled, skipping setup");
         return;
       }
 
       const serviceName =
-        options.serviceName ?? app.config.otel?.serviceName ?? DEFAULT_SERVICE_NAME;
+        options.serviceName ??
+        app.config.otel?.serviceName ??
+        packageConfig.serviceName ??
+        DEFAULT_SERVICE_NAME;
 
       // ── SDK Exporter 配置（向已启动的 SDK 追加 exporter）────────
-      const endpoint = options.endpoint ?? app.config.otel?.endpoint ?? "none";
+      const endpoint =
+        options.endpoint ?? app.config.otel?.endpoint ?? packageConfig.endpoint ?? "none";
+      const protocol =
+        options.protocol ?? app.config.otel?.protocol ?? packageConfig.protocol ?? "http";
+      const headers = options.headers ?? app.config.otel?.headers ?? packageConfig.headers;
       if (endpoint !== "none") {
-        await attachExporterToSdk({
-          endpoint,
-          protocol: options.protocol ?? "http",
-          headers: options.headers,
-          insecure: options.insecure,
-          serviceName,
-        });
+        if (process.env.VEXT_OTEL_SDK_STARTED === "1") {
+          await attachExporterToSdk({
+            endpoint,
+            protocol,
+            headers,
+            insecure: options.insecure ?? app.config.otel?.insecure,
+            serviceName,
+          });
+        } else {
+          const { startOtelSdk } = await import("../core/sdk-start.js");
+          await startOtelSdk({
+            enabled: true,
+            serviceName,
+            endpoint: "none",
+            protocol,
+            headers: undefined,
+            sampling: { ratio: packageConfig.samplingRatio ?? 1.0 },
+            metricIntervalMs: packageConfig.metricIntervalMs ?? 15000,
+          });
+          await attachExporterToSdk({
+            endpoint,
+            protocol,
+            headers,
+            insecure: options.insecure ?? app.config.otel?.insecure,
+            serviceName,
+          });
+        }
       } else {
         // endpoint 为 "none"，仅更新 serviceName 显示
         process.env.OTEL_SERVICE_NAME = serviceName;
