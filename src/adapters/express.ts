@@ -2,10 +2,10 @@
 // Express 框架适配器
 //
 // 用法：
-//   import { createExpressMiddleware } from "vextjs-opentelemetry/express";
+//   import { createExpressMiddleware } from "@devcodex/opentelemetry/express";
 //   app.use(createExpressMiddleware({ serviceName: "my-app" }));
 //
-// Egg.js 不在此适配器范围内，请使用 vextjs-opentelemetry/koa。
+// Egg.js 不在此适配器范围内，请使用 @devcodex/opentelemetry/koa。
 //
 // 注意（Express route 时序）：
 //   在 app.use() 全局中间件中，req.route 在此时为 undefined（路由匹配尚未发生）。
@@ -49,7 +49,7 @@ declare module "express-serve-static-core" {
  * @returns Express `RequestHandler`（可直接传入 `app.use()`）
  *
  * @example
- * import { createExpressMiddleware } from "vextjs-opentelemetry/express";
+ * import { createExpressMiddleware } from "@devcodex/opentelemetry/express";
  * app.use(createExpressMiddleware({ serviceName: "my-express-app" }));
  */
 export function createExpressMiddleware(options: HttpOtelOptions<{ req: Request; res: Response }> = {}): RequestHandler {

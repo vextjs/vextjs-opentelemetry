@@ -99,7 +99,7 @@ export interface AttachExporterConfig {
  *
  * @example
  * // Express 应用启动（直接调用，无需框架插件系统）
- * import { attachExporterToSdk } from "vextjs-opentelemetry";
+ * import { attachExporterToSdk } from "@devcodex/opentelemetry";
  * await attachExporterToSdk({ endpoint: process.env.OTEL_ENDPOINT ?? "none" });
  */
 export async function attachExporterToSdk(config: AttachExporterConfig): Promise<void> {

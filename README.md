@@ -1,8 +1,8 @@
-# vextjs-opentelemetry
+# @devcodex/opentelemetry
 
 > 多框架 OpenTelemetry 集成 — 零配置追踪、指标与日志，支持 VextJS / Egg.js / Koa / Express / Hono / Fastify
 
-[![npm version](https://img.shields.io/npm/v/vextjs-opentelemetry.svg)](https://www.npmjs.com/package/vextjs-opentelemetry)
+[![npm version](https://img.shields.io/npm/v/@devcodex/opentelemetry.svg)](https://www.npmjs.com/package/@devcodex/opentelemetry)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 将原本需要手写的 ~200 行 OpenTelemetry 样板代码压缩为极简配置，开箱即得 Traces（链路追踪）、Metrics（指标监控）与 Logs（日志关联）。
@@ -56,12 +56,12 @@
 
 ## 安装
 
-> **Node.js 要求**：`vextjs-opentelemetry` 当前声明 `engines.node >= 18`。
+> **Node.js 要求**：`@devcodex/opentelemetry` 当前声明 `engines.node >= 18`。
 > 若你的服务 `package.json` 仍写 `>=16`，升级依赖前请先确认实际运行环境已是 Node 18+；否则安装阶段可能只给 warning，但运行时不属于受支持范围。
 
 ```bash
 # 常规接入（VextJS / Koa / Express / Hono / Fastify）
-npm install vextjs-opentelemetry
+npm install @devcodex/opentelemetry
 
 # 仅当你的应用代码会直接 import 这些 instrumentation 时，再额外声明
 # 典型场景：Egg/Koa 的 otel-init.cjs 自己 new Instrumentation()
@@ -71,7 +71,7 @@ npm install @opentelemetry/instrumentation-http \
             @opentelemetry/instrumentation-mysql2
 ```
 
-> `vextjs-opentelemetry` 已内置 `@opentelemetry/api`、`@opentelemetry/sdk-node` 和常用 OTLP exporter。
+> `@devcodex/opentelemetry` 已内置 `@opentelemetry/api`、`@opentelemetry/sdk-node` 和常用 OTLP exporter。
 > 对于正常接入，**不需要**再重复安装这些包。只有当你的业务代码要直接 `import { NodeSDK } ...` / `import { SpanStatusCode } ...` 时，才建议把对应包声明为应用自己的直接依赖。
 
 ---
@@ -145,7 +145,7 @@ VextJS 自动 preload 场景下，默认不会抢先根据 `package.json vext.ot
 - `app.config.otel.enabled=false` 或 `opentelemetryPlugin({ enabled: false })` 会阻止插件阶段启动 SDK、挂载请求观测、注册 `/_otel/status` 和 logger bridge。
 - `package.json vext.otel.enabled=false`、`VEXT_OTEL_DISABLED=1`、`VEXT_OTEL_PRELOAD=0` 或 `OTEL_SDK_DISABLED=true` 会在 preload 阶段直接早退，不加载完整 OTel SDK。
 - 如果你确实需要进程最早期 SDK / auto-instrumentation，请显式设置 `package.json vext.otel.preloadSdk=true` 或 `VEXT_OTEL_FORCE_SDK=1`。启用后，这段初始化早于 `src/config/default.ts`，因此后者无法再回滚已经启动的 SDK/exporter。
-- 非 Vext 手动 `node --import vextjs-opentelemetry/instrumentation ...` 场景保持独立心智模型：有有效 endpoint 时会在 preload 阶段启动 SDK；`endpoint:"none"` 且无强制 SDK/auto-instrumentation 信号时保持 noop。
+- 非 Vext 手动 `node --import @devcodex/opentelemetry/instrumentation ...` 场景保持独立心智模型：有有效 endpoint 时会在 preload 阶段启动 SDK；`endpoint:"none"` 且无强制 SDK/auto-instrumentation 信号时保持 noop。
 
 ### 为什么 Egg / Koa 默认偏向 gRPC h2c
 
@@ -279,7 +279,7 @@ VextJS 自动 preload 场景下，默认不会抢先根据 `package.json vext.ot
 适用：**VextJS plugin setup + request 阶段**。
 
 ```typescript
-import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
+import { opentelemetryPlugin } from "@devcodex/opentelemetry/vextjs";
 
 export default opentelemetryPlugin({
   serviceName: "my-app",
@@ -318,7 +318,7 @@ export default opentelemetryPlugin({
 
 ```javascript
 "use strict";
-const { initOtel } = require("vextjs-opentelemetry/koa");
+const { initOtel } = require("@devcodex/opentelemetry/koa");
 const { HttpInstrumentation } = require("@opentelemetry/instrumentation-http");
 
 initOtel({
@@ -591,7 +591,7 @@ VextJS 是唯一同时具备 **preload 初始化** 与 **plugin setup** 两阶�
 
 ```typescript
 // src/plugins/otel.ts
-import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
+import { opentelemetryPlugin } from "@devcodex/opentelemetry/vextjs";
 
 export default opentelemetryPlugin({
   serviceName: "admin",
@@ -631,7 +631,7 @@ VextJS 使用 `vext start` / `vext dev` 时，instrumentation 会通过 `vext.pr
 ```json
 {
   "scripts": {
-    "start": "node --import vextjs-opentelemetry/instrumentation dist/server.js"
+    "start": "node --import @devcodex/opentelemetry/instrumentation dist/server.js"
   }
 }
 ```
@@ -643,7 +643,7 @@ Egg.js 采用 CJS `--require` 预加载模式，**SDK 必须在任何模块加�
 ```javascript
 // app/otel-init.cjs
 "use strict";
-const { initOtel } = require("vextjs-opentelemetry/koa");
+const { initOtel } = require("@devcodex/opentelemetry/koa");
 const { HttpInstrumentation } = require("@opentelemetry/instrumentation-http");
 
 initOtel({
@@ -667,7 +667,7 @@ initOtel({
 import {
   createEggMiddleware,
   type EggContextLike,
-} from "vextjs-opentelemetry/egg";
+} from "@devcodex/opentelemetry/egg";
 
 type AppEggContext = EggContextLike & {
   user_id?: string;
@@ -707,8 +707,8 @@ export default createEggMiddleware<AppEggContext>({
 
 ```typescript
 import Koa from "koa";
-import { createKoaMiddleware } from "vextjs-opentelemetry/koa";
-import { getOtelStatus } from "vextjs-opentelemetry";
+import { createKoaMiddleware } from "@devcodex/opentelemetry/koa";
+import { getOtelStatus } from "@devcodex/opentelemetry";
 
 const app = new Koa();
 
@@ -731,12 +731,12 @@ app.use(async (ctx, next) => {
 ### Express
 
 > Express / Hono / Fastify 只提供 HTTP 中间件 / 插件适配层，**不提供** `initOtel()` 子路径。
-> 这三类框架请先通过 `node --import vextjs-opentelemetry/instrumentation ...` 或自建 bootstrap 完成 SDK 初始化，再注册中间件 / 插件。
+> 这三类框架请先通过 `node --import @devcodex/opentelemetry/instrumentation ...` 或自建 bootstrap 完成 SDK 初始化，再注册中间件 / 插件。
 
 ```typescript
 import express from "express";
-import { createExpressMiddleware } from "vextjs-opentelemetry/express";
-import { getOtelStatus } from "vextjs-opentelemetry";
+import { createExpressMiddleware } from "@devcodex/opentelemetry/express";
+import { getOtelStatus } from "@devcodex/opentelemetry";
 
 const app = express();
 app.use(createExpressMiddleware({ serviceName: "my-express-app" }));
@@ -747,8 +747,8 @@ app.get("/_otel/status", (_req, res) => res.json(getOtelStatus()));
 
 ```typescript
 import { Hono } from "hono";
-import { createHonoMiddleware } from "vextjs-opentelemetry/hono";
-import { getOtelStatus } from "vextjs-opentelemetry";
+import { createHonoMiddleware } from "@devcodex/opentelemetry/hono";
+import { getOtelStatus } from "@devcodex/opentelemetry";
 
 const app = new Hono();
 app.use(createHonoMiddleware({ serviceName: "my-hono-app" }));
@@ -759,8 +759,8 @@ app.get("/_otel/status", (c) => c.json(getOtelStatus()));
 
 ```typescript
 import Fastify from "fastify";
-import { createFastifyPlugin } from "vextjs-opentelemetry/fastify";
-import { getOtelStatus } from "vextjs-opentelemetry";
+import { createFastifyPlugin } from "@devcodex/opentelemetry/fastify";
+import { getOtelStatus } from "@devcodex/opentelemetry";
 
 const fastify = Fastify();
 await fastify.register(createFastifyPlugin({ serviceName: "my-fastify-app" }));
@@ -845,7 +845,7 @@ import {
   createWithSpan,
   getActiveTraceId,
   getOtelStatus,
-} from "vextjs-opentelemetry";
+} from "@devcodex/opentelemetry";
 
 const withSpan = createWithSpan("my-service");
 

@@ -4,7 +4,7 @@
 // 整合了旧 plugin.ts + middleware.ts，不再依赖这两个旧文件。
 //
 // 用法：
-//   import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
+//   import { opentelemetryPlugin } from "@devcodex/opentelemetry/vextjs";
 //   export default opentelemetryPlugin({ serviceName: "my-app" });
 
 import { trace, metrics as otelMetrics, SpanStatusCode } from "@opentelemetry/api";
@@ -119,7 +119,7 @@ export type { OtelAppExtension, OtelMetrics };
 
 declare module "vextjs" {
   interface VextApp {
-    /** OpenTelemetry 集成对象（由 vextjs-opentelemetry 插件挂载） */
+    /** OpenTelemetry 集成对象（由 @devcodex/opentelemetry 插件挂载） */
     otel?: OtelAppExtension;
   }
   interface VextRequest {
@@ -484,7 +484,7 @@ function bridgeAppLoggerToOtel(
  *
  * @example
  * // src/plugins/otel.ts
- * import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs";
+ * import { opentelemetryPlugin } from "@devcodex/opentelemetry/vextjs";
  * export default opentelemetryPlugin({ serviceName: "my-app" });
  */
 export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {

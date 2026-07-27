@@ -111,7 +111,7 @@ export interface StructuredLogFormatterOptions<
  *
  * @example
  * // Egg.js config/config.default.ts
- * import { createStructuredLogFormatter } from 'vextjs-opentelemetry/log';
+ * import { createStructuredLogFormatter } from '@devcodex/opentelemetry/log';
  *
  * const formatter = createStructuredLogFormatter({
  *   serviceName: 'chat',
@@ -215,7 +215,7 @@ export type { OtelLogBridge, OtelLogBridgeOptions } from "./core/types.js";
  * @returns `{ emit(level, message, attributes?) }` 桥接对象
  *
  * @example
- * import { createOtelLogBridge, getOtelLogger } from 'vextjs-opentelemetry/log';
+ * import { createOtelLogBridge, getOtelLogger } from '@devcodex/opentelemetry/log';
  *
  * const bridge = createOtelLogBridge(() => getOtelLogger("chat"), {
  *   globalAttributes: {

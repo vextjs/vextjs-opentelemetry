@@ -3,12 +3,12 @@
 //
 // 框架无关 — 不依赖 vextjs / express / koa / hono / fastify。
 // 各框架适配器请使用对应子路径：
-//   import { opentelemetryPlugin } from "vextjs-opentelemetry/vextjs"
-//   import { createKoaMiddleware } from "vextjs-opentelemetry/koa"
-//   import { createEggMiddleware } from "vextjs-opentelemetry/egg"
-//   import { createExpressMiddleware } from "vextjs-opentelemetry/express"
-//   import { createFastifyPlugin } from "vextjs-opentelemetry/fastify"
-//   import { createHonoMiddleware } from "vextjs-opentelemetry/hono"
+//   import { opentelemetryPlugin } from "@devcodex/opentelemetry/vextjs"
+//   import { createKoaMiddleware } from "@devcodex/opentelemetry/koa"
+//   import { createEggMiddleware } from "@devcodex/opentelemetry/egg"
+//   import { createExpressMiddleware } from "@devcodex/opentelemetry/express"
+//   import { createFastifyPlugin } from "@devcodex/opentelemetry/fastify"
+//   import { createHonoMiddleware } from "@devcodex/opentelemetry/hono"
 
 // ── Span / Trace / Log 工具（业务代码直接使用）───────────────
 export {

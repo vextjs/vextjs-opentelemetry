@@ -2,7 +2,7 @@
 // Span 工具 API（v1.0.0 重构）
 //
 // 框架无关，业务代码直接从主入口使用：
-//   import { withSpan, createWithSpan, getActiveTraceId, getOtelStatus } from "vextjs-opentelemetry"
+//   import { withSpan, createWithSpan, getActiveTraceId, getOtelStatus } from "@devcodex/opentelemetry"
 //
 // 100% 依赖 @opentelemetry/api，不引入任何 SDK 包。
 
@@ -26,7 +26,7 @@ import { DEFAULT_SERVICE_NAME } from "./types.js";
  *                额外字段 tracerName 指定具名 tracer（默认 "vextjs-opentelemetry"）
  *
  * @example
- * import { withSpan } from "vextjs-opentelemetry";
+ * import { withSpan } from "@devcodex/opentelemetry";
  *
  * // 不接触 span（仅追踪生命周期）
  * const result = await withSpan("user.queryById", () => db.findUser(id));
@@ -72,7 +72,7 @@ export function withSpan<T>(
  * @param tracerName Tracer 名称（通常与服务名一致，如 "user"、"chat"）
  *
  * @example
- * import { createWithSpan } from "vextjs-opentelemetry";
+ * import { createWithSpan } from "@devcodex/opentelemetry";
  *
  * // 模块顶部创建，绑定服务名
  * const withSpan = createWithSpan("user-service");
@@ -129,7 +129,7 @@ export function getActiveSpan(): Span | undefined {
  * 用于日志关联：将 traceId 写入日志字段，与 Trace 数据形成关联。
  *
  * @example
- * import { getActiveTraceId } from "vextjs-opentelemetry";
+ * import { getActiveTraceId } from "@devcodex/opentelemetry";
  *
  * // Egg.js / Koa
  * ctx.logger.info("处理用户请求", { trace_id: getActiveTraceId(), userId });
@@ -158,7 +158,7 @@ export function getActiveSpanId(): string {
  *
  * @example
  * // Egg.js router
- * import { getOtelStatus } from "vextjs-opentelemetry";
+ * import { getOtelStatus } from "@devcodex/opentelemetry";
  * router.get("/_otel/status", async (ctx) => {
  *   ctx.body = getOtelStatus();
  * });
@@ -192,8 +192,8 @@ export function getOtelStatus(): OtelStatus {
  * @param name Logger 名称（通常与 serviceName 一致）
  *
  * @example
- * import { getOtelLogger } from "vextjs-opentelemetry";
- * import { createOtelLogBridge } from "vextjs-opentelemetry/log";
+ * import { getOtelLogger } from "@devcodex/opentelemetry";
+ * import { createOtelLogBridge } from "@devcodex/opentelemetry/log";
  *
  * const bridge = createOtelLogBridge(() => getOtelLogger("chat"));
  * bridge.emit("info", "user logged in", { "user.id": userId });

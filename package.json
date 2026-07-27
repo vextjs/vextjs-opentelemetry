@@ -1,6 +1,6 @@
 {
-  "name": "vextjs-opentelemetry",
-  "version": "2.1.11",
+  "name": "@devcodex/opentelemetry",
+  "version": "2.1.12",
   "description": "Framework-agnostic OpenTelemetry SDK wrapper — zero-config traces, metrics, Span API and multi-framework adapters",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -75,7 +75,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vextjs/vextjs-opentelemetry.git"
+    "url": "git+https://github.com/devcodex-labs/opentelemetry.git"
   },
   "dependencies": {
     "@grpc/grpc-js": "1.14.3",
@@ -141,5 +141,9 @@
     "typescript": "5.9.3",
     "vextjs": "0.3.5",
     "vitest": "3.2.6"
+  },
+  "homepage": "https://github.com/devcodex-labs/opentelemetry#readme",
+  "bugs": {
+    "url": "https://github.com/devcodex-labs/opentelemetry/issues"
   }
 }

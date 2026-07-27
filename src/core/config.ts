@@ -100,7 +100,8 @@ export function resolvePackageOtelConfig(): ResolvedPackageOtelConfig {
   const packageJson = readAppPackageJson();
   const packageOtel = packageJson?.vext?.otel;
   const packageName =
-    packageJson?.name && packageJson.name !== "vextjs-opentelemetry"
+    packageJson?.name &&
+    !new Set(["vextjs-opentelemetry", "@devcodex/opentelemetry"]).has(packageJson.name)
       ? packageJson.name
       : undefined;
 

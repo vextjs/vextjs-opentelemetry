@@ -2,7 +2,7 @@
 // Fastify 框架适配器
 //
 // 用法：
-//   import { createFastifyPlugin } from "vextjs-opentelemetry/fastify";
+//   import { createFastifyPlugin } from "@devcodex/opentelemetry/fastify";
 //   await fastify.register(createFastifyPlugin({ serviceName: "my-app" }));
 //
 // 实现方式：
@@ -55,7 +55,7 @@ declare module "fastify" {
  * @returns Fastify 插件（`FastifyPluginAsync`）
  *
  * @example
- * import { createFastifyPlugin } from "vextjs-opentelemetry/fastify";
+ * import { createFastifyPlugin } from "@devcodex/opentelemetry/fastify";
  * await fastify.register(createFastifyPlugin({ serviceName: "my-fastify-app" }));
  */
 export function createFastifyPlugin(options: HttpOtelOptions<{ request: FastifyRequest; reply: FastifyReply }> = {}): FastifyPluginAsync {

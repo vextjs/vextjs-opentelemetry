@@ -112,4 +112,16 @@ describe("resolveOtelConfig", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("当前工作目录是新 scoped 包名时，默认值仍保持 vext-app", () => {
+    const dir = withTempPackageJson({ name: "@devcodex/opentelemetry" });
+
+    try {
+      const config = resolveOtelConfig();
+      expect(config.serviceName).toBe("vext-app");
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -3,13 +3,13 @@
 // OpenTelemetry SDK 初始化入口（v1.0.0 重构）
 //
 // 唯一推荐初始化方式：
-//   node --import vextjs-opentelemetry/instrumentation server.js
+//   node --import @devcodex/opentelemetry/instrumentation server.js
 //
 // 框架 CLI 等价（自动注入）：
 //   vext start / vext dev
 //
 // Docker / K8s 环境变量方式：
-//   ENV NODE_OPTIONS="--import vextjs-opentelemetry/instrumentation"
+//   ENV NODE_OPTIONS="--import @devcodex/opentelemetry/instrumentation"
 //
 // 配置来源（优先级从高到低）：
 //   1. 消费应用 package.json 的 vext.otel.*

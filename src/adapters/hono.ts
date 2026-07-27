@@ -2,14 +2,14 @@
 // Hono 框架适配器
 //
 // 用法：
-//   import { createHonoMiddleware } from "vextjs-opentelemetry/hono";
+//   import { createHonoMiddleware } from "@devcodex/opentelemetry/hono";
 //   app.use(createHonoMiddleware({ serviceName: "my-app" }));
 //
 // ── withSpan 注入说明 ───────────────────────────────────────────
 // Hono 使用泛型 Variables 管理 context 变量，无法通过 declare module 全局扩展。
 // 推荐在应用侧声明 Variables 类型，并通过 c.get("withSpan") 使用：
 //
-//   import { withSpan } from "vextjs-opentelemetry";
+//   import { withSpan } from "@devcodex/opentelemetry";
 //   import type { Hono } from "hono";
 //
 //   type AppVariables = { withSpan: typeof withSpan };
@@ -70,7 +70,7 @@ async function getCachedHonoBody(c: HonoContext): Promise<unknown> {
  * @returns Hono `MiddlewareHandler`（可直接传入 `app.use()`）
  *
  * @example
- * import { createHonoMiddleware } from "vextjs-opentelemetry/hono";
+ * import { createHonoMiddleware } from "@devcodex/opentelemetry/hono";
  * app.use(createHonoMiddleware({ serviceName: "my-hono-app" }));
  */
 export function createHonoMiddleware(options: HttpOtelOptions<HonoContext> = {}): MiddlewareHandler {

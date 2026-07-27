@@ -2,15 +2,15 @@
 // Koa 框架适配器（v1.0.0 重构）
 //
 // 用法（Koa）：
-//   import { createKoaMiddleware } from "vextjs-opentelemetry/koa";
+//   import { createKoaMiddleware } from "@devcodex/opentelemetry/koa";
 //   app.use(createKoaMiddleware({ serviceName: "my-app" }));
 //
 // 用法（Egg.js）：
-//   import { createKoaMiddleware } from "vextjs-opentelemetry/koa";
+//   import { createKoaMiddleware } from "@devcodex/opentelemetry/koa";
 //   export default (_opts, _app) => createKoaMiddleware({ serviceName: "user" });
 //
 //   推荐使用专属适配器：
-//   import { defineEggMiddleware } from "vextjs-opentelemetry/egg";
+//   import { defineEggMiddleware } from "@devcodex/opentelemetry/egg";
 //   export default defineEggMiddleware({ serviceName: "user" });
 
 import { trace, SpanKind } from "@opentelemetry/api";
@@ -170,7 +170,7 @@ export function createKoaMiddleware(options: HttpOtelOptions<Context> = {}): Mid
 //   "none" / 不传        → 不上报（仅本地 SDK，适合测试）
 //
 // 用法（otel-init.cjs）：
-//   const { initOtel } = require('vextjs-opentelemetry/koa');
+//   const { initOtel } = require('@devcodex/opentelemetry/koa');
 //   const { HttpInstrumentation } = require('@opentelemetry/instrumentation-http');
 //   initOtel({
 //     serviceName: 'my-app',

@@ -30,7 +30,7 @@
 //
 // 用法：
 //   // app/middleware/otel.ts
-//   import { createEggMiddleware } from 'vextjs-opentelemetry/egg';
+//   import { createEggMiddleware } from '@devcodex/opentelemetry/egg';
 //   export default createEggMiddleware({
 //     serviceName: 'my-service',
 //     tracing: { ignorePaths: [/^\/favicon/] },
