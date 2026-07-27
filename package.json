@@ -77,6 +77,10 @@
     "type": "git",
     "url": "git+https://github.com/devcodex-labs/opentelemetry.git"
   },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "dependencies": {
     "@grpc/grpc-js": "1.14.3",
     "@opentelemetry/api": "1.9.1",
