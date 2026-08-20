@@ -33,7 +33,9 @@ describe("registerEsmInstrumentationHook", () => {
 
     const [hookUrl, registeredParentUrl] = register.mock.calls[0] ?? [];
     expect(hookUrl).toBeInstanceOf(URL);
-    expect((hookUrl as URL).pathname).toContain("/hook.mjs");
+    expect(decodeURIComponent((hookUrl as URL).pathname)).toMatch(
+      /[\\/]hook\.mjs$/,
+    );
     expect(registeredParentUrl).toBe(parentURL);
 
     expect(registerEsmInstrumentationHook(moduleApi, parentURL)).toBe(true);

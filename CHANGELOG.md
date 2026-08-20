@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Version      | Date       | Type  | Key Theme                                                                                                                                                          |
 | ------------ | ---------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [Unreleased] | —          | —     | Pending changes                                                                                                                                                    |
+| [2.1.17]     | 2026-08-20 | Patch | 修正 ESM loader hook 测试对 Windows / POSIX 路径的跨平台断言；替代在 Test 阶段失败、未执行 npm publish 的 `v2.1.16` tag                                      |
 | [2.1.16]     | 2026-08-20 | Patch | ESM preload 先注册 OpenTelemetry loader hook，修复 VextJS 纯 ESM 应用的 HTTP 自动插桩缺口；Vext 插件关闭时等待 SDK shutdown；升级 OTel / gRPC 安全依赖并适配日志批处理器的新 options API |
 | [2.1.12]     | 2026-07-27 | Patch | 包名迁移到 `@devcodex/opentelemetry`，仓库入口迁移到 `devcodex-labs/opentelemetry`，保留运行时兼容标识与日志前缀                                      |
 | [2.1.11]     | 2026-06-11 | Patch | VextJS 自动 preload 延后完整 SDK/exporter，修复禁用后仍可能启动/上报，并升级 OTel auto-instrumentations 安全依赖 [查看](./changelogs/v2.1.11.md)                   |
@@ -38,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - [Detailed Changelog File](./changelogs/v2.1.0.md)
 
-[Unreleased]: https://github.com/devcodex-labs/opentelemetry/compare/v2.1.16...HEAD
+[Unreleased]: https://github.com/devcodex-labs/opentelemetry/compare/v2.1.17...HEAD
+[2.1.17]: https://github.com/devcodex-labs/opentelemetry/compare/v2.1.16...v2.1.17
 [2.1.16]: https://github.com/devcodex-labs/opentelemetry/compare/v2.1.15...v2.1.16
 [2.1.12]: https://github.com/devcodex-labs/opentelemetry/compare/v2.1.11...v2.1.12
 [2.1.11]: https://github.com/devcodex-labs/opentelemetry/compare/v2.1.10...v2.1.11
