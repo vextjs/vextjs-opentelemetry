@@ -633,6 +633,8 @@ export function opentelemetryPlugin(options: OpenTelemetryPluginOptions = {}) {
 
     async onClose(app) {
       app.logger.info("[vextjs-opentelemetry] plugin closing, flushing telemetry...");
+      const { shutdownOtelSdk } = await import("../core/sdk-start.js");
+      await shutdownOtelSdk();
     },
   });
 }

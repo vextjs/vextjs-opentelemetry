@@ -18,6 +18,8 @@ import type { ExportMode, OtelConfig } from "./types.js";
 interface SdkRuntimeState {
   started: boolean;
   startPromise?: Promise<void>;
+  shutdown?: () => Promise<void>;
+  shutdownPromise?: Promise<void>;
 }
 
 const SDK_RUNTIME_KEY = Symbol.for("vextjs-opentelemetry.v1.sdk-runtime");
@@ -30,6 +32,14 @@ function getRuntimeState(): SdkRuntimeState {
 
 export function isOtelSdkStarted(): boolean {
   return getRuntimeState().started || process.env.VEXT_OTEL_SDK_STARTED === "1";
+}
+
+export function shutdownOtelSdk(): Promise<void> {
+  const runtime = getRuntimeState();
+  if (!runtime.shutdown) return Promise.resolve();
+
+  runtime.shutdownPromise ??= runtime.shutdown();
+  return runtime.shutdownPromise;
 }
 
 export interface StartOtelSdkOptions {
@@ -133,7 +143,9 @@ async function startOtelSdkOnce(
     );
     deferredState.metricExporter.configure(createFileMetricExporter(exportDir) as never);
     deferredState.logProcessor.configure(
-      new BatchLogRecordProcessor(createFileLogExporter(exportDir) as never),
+      new BatchLogRecordProcessor({
+        exporter: createFileLogExporter(exportDir) as never,
+      }),
     );
   } else if (exportMode === "otlp-grpc") {
     const grpc = await tryCreateGrpcExporters(config.endpoint, config.headers);
@@ -153,9 +165,9 @@ async function startOtelSdkOnce(
       );
     }
     deferredState.logProcessor.configure(
-      new BatchLogRecordProcessor(
-        new OTLPLogExporter({ url: `${httpBase}/v1/logs` }),
-      ),
+      new BatchLogRecordProcessor({
+        exporter: new OTLPLogExporter({ url: `${httpBase}/v1/logs` }),
+      }),
     );
   } else if (exportMode === "otlp-http") {
     deferredState.spanProcessor.configure(
@@ -167,9 +179,9 @@ async function startOtelSdkOnce(
       new OTLPMetricExporter({ url: `${httpBase}/v1/metrics` }),
     );
     deferredState.logProcessor.configure(
-      new BatchLogRecordProcessor(
-        new OTLPLogExporter({ url: `${httpBase}/v1/logs` }),
-      ),
+      new BatchLogRecordProcessor({
+        exporter: new OTLPLogExporter({ url: `${httpBase}/v1/logs` }),
+      }),
     );
   }
 
@@ -239,12 +251,19 @@ async function startOtelSdkOnce(
     );
   }
 
+  getRuntimeState().shutdown = async () => {
+    try {
+      await Promise.all([sdk.shutdown(), loggerProvider.shutdown()]);
+      console.log("[vextjs-opentelemetry] SDK shutdown complete");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[vextjs-opentelemetry] SDK shutdown error:", message);
+      throw err;
+    }
+  };
+
   const shutdownHandler = () => {
-    Promise.all([sdk.shutdown(), loggerProvider.shutdown()])
-      .then(() => console.log("[vextjs-opentelemetry] SDK shutdown complete"))
-      .catch((err: Error) =>
-        console.error("[vextjs-opentelemetry] SDK shutdown error:", err.message),
-      );
+    void shutdownOtelSdk().catch(() => undefined);
   };
   process.on("SIGTERM", shutdownHandler);
   process.on("SIGINT", shutdownHandler);

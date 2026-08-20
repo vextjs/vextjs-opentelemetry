@@ -15,6 +15,7 @@ const {
   mockAttachExporterToSdk,
   mockResolvePackageOtelConfig,
   mockStartOtelSdk,
+  mockShutdownOtelSdk,
 } = vi.hoisted(() => {
   const tracer = {
     startSpan: vi.fn(),
@@ -47,6 +48,7 @@ const {
     mockAttachExporterToSdk: vi.fn(() => Promise.resolve()),
     mockResolvePackageOtelConfig: vi.fn(() => ({})),
     mockStartOtelSdk: vi.fn(() => Promise.resolve()),
+    mockShutdownOtelSdk: vi.fn(() => Promise.resolve()),
   };
 });
 
@@ -74,6 +76,7 @@ vi.mock("../src/core/sdk-config.js", () => ({
 
 vi.mock("../src/core/sdk-start.js", () => ({
   startOtelSdk: mockStartOtelSdk,
+  shutdownOtelSdk: mockShutdownOtelSdk,
 }));
 
 // ── 被测模块（在 mock 声明之后 import）────────────────────────────────────
@@ -548,6 +551,7 @@ describe("opentelemetryPlugin", () => {
       expect(app.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("flushing"),
       );
+      expect(mockShutdownOtelSdk).toHaveBeenCalledTimes(1);
     });
 
     it("onClose 在 disabled 模式下不抛错", async () => {

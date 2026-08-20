@@ -310,9 +310,9 @@ export function initOtel(options: InitOtelOptions): void {
           new BatchSpanProcessor(makeGrpcExporter(TRACE_PATH, (d) => ProtobufTraceSerializer.serializeRequest(d as never), traceSession)),
         ];
         metricExporter = makeGrpcExporter(METRIC_PATH, (d) => ProtobufMetricsSerializer.serializeRequest(d as never), metricSession);
-        logProcessor = new BatchLogRecordProcessor(
-          makeGrpcExporter(LOG_PATH, (d) => ProtobufLogsSerializer.serializeRequest(d as never), logSession),
-        );
+        logProcessor = new BatchLogRecordProcessor({
+          exporter: makeGrpcExporter(LOG_PATH, (d) => ProtobufLogsSerializer.serializeRequest(d as never), logSession),
+        });
       } else {
         // OTLP HTTP
         const { OTLPTraceExporter } = r("@opentelemetry/exporter-trace-otlp-http");
@@ -321,7 +321,9 @@ export function initOtel(options: InitOtelOptions): void {
 
         spanProcessors = [new BatchSpanProcessor(new OTLPTraceExporter({ url: `${httpBase}/v1/traces`, headers }))];
         metricExporter = new OTLPMetricExporter({ url: `${httpBase}/v1/metrics`, headers });
-        logProcessor = new BatchLogRecordProcessor(new OTLPLogExporter({ url: `${httpBase}/v1/logs`, headers }));
+        logProcessor = new BatchLogRecordProcessor({
+          exporter: new OTLPLogExporter({ url: `${httpBase}/v1/logs`, headers }),
+        });
       }
     }
 

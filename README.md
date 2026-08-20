@@ -56,8 +56,8 @@
 
 ## 安装
 
-> **Node.js 要求**：`@devcodex/opentelemetry` 当前声明 `engines.node >= 18`。
-> 若你的服务 `package.json` 仍写 `>=16`，升级依赖前请先确认实际运行环境已是 Node 18+；否则安装阶段可能只给 warning，但运行时不属于受支持范围。
+> **Node.js 要求**：`@devcodex/opentelemetry` 当前声明 `engines.node ^18.19.0 || >=20.6.0`。
+> 若你的服务仍使用 Node `18.0–18.18` 或 `20.0–20.5`，请先升级运行时；安装阶段可能只给 warning，但这些版本不属于当前 OpenTelemetry SDK 的受支持范围。
 
 ```bash
 # 常规接入（VextJS / Koa / Express / Hono / Fastify）
@@ -144,7 +144,7 @@ VextJS 自动 preload 场景下，默认不会抢先根据 `package.json vext.ot
 
 - `app.config.otel.enabled=false` 或 `opentelemetryPlugin({ enabled: false })` 会阻止插件阶段启动 SDK、挂载请求观测、注册 `/_otel/status` 和 logger bridge。
 - `package.json vext.otel.enabled=false`、`VEXT_OTEL_DISABLED=1`、`VEXT_OTEL_PRELOAD=0` 或 `OTEL_SDK_DISABLED=true` 会在 preload 阶段直接早退，不加载完整 OTel SDK。
-- 如果你确实需要进程最早期 SDK / auto-instrumentation，请显式设置 `package.json vext.otel.preloadSdk=true` 或 `VEXT_OTEL_FORCE_SDK=1`。启用后，这段初始化早于 `src/config/default.ts`，因此后者无法再回滚已经启动的 SDK/exporter。
+- 如果你确实需要进程最早期 SDK / auto-instrumentation，请显式设置 `package.json vext.otel.preloadSdk=true` 或 `VEXT_OTEL_FORCE_SDK=1`。启用后，这段初始化早于 `src/config/default.ts`，因此后者无法再回滚已经启动的 SDK/exporter；在支持 `node:module.register()` 的 Node 运行时中，preload 也会先注册 OpenTelemetry 的 ESM hook，以覆盖随后载入的 ESM 模块。
 - 非 Vext 手动 `node --import @devcodex/opentelemetry/instrumentation ...` 场景保持独立心智模型：有有效 endpoint 时会在 preload 阶段启动 SDK；`endpoint:"none"` 且无强制 SDK/auto-instrumentation 信号时保持 noop。
 
 ### 为什么 Egg / Koa 默认偏向 gRPC h2c
@@ -626,7 +626,7 @@ export default opentelemetryPlugin({
 > `opentelemetryPlugin({ serviceName })` 会影响运行期 tracer / meter / logger 命名。默认 Vext 自动 preload 会延后 SDK/exporter 到 plugin setup，因此 `package.json vext.otel` 可作为 plugin fallback；如果显式 `preloadSdk=true`，SDK Resource 会在 preload 阶段固定，建议同时在 package 配置中写 `serviceName`。
 > 本地开发或临时停报时，可设置 `app.config.otel.enabled=false`、`opentelemetryPlugin({ enabled:false })`、`package.json vext.otel.enabled=false` 或 `OTEL_SDK_DISABLED=true`；需要完全跳过 Vext package preload 时可加 `VEXT_OTEL_PRELOAD=0`。
 
-VextJS 使用 `vext start` / `vext dev` 时，instrumentation 会通过 `vext.preload` 自动注入；自定义启动脚本时需手动加 `--import`：
+VextJS 使用 `vext start` / `vext dev` 时，instrumentation 会通过 `vext.preload` 自动注入；自定义启动脚本时需手动加 `--import`。支持 `node:module.register()` 的运行时会自动注册 OpenTelemetry ESM hook，无需额外添加实验性 loader 参数：
 
 ```json
 {

@@ -134,7 +134,9 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
 
       if (!deferredState.logProcessor.isConfigured()) {
         deferredState.logProcessor.configure(
-          new BatchLogRecordProcessor(createFileLogExporter(dir) as never),
+          new BatchLogRecordProcessor({
+            exporter: createFileLogExporter(dir) as never,
+          }),
         );
       }
 
@@ -181,12 +183,12 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
 
       if (!deferredState.logProcessor.isConfigured()) {
         deferredState.logProcessor.configure(
-          new BatchLogRecordProcessor(
-            new OTLPLogExporter({
+          new BatchLogRecordProcessor({
+            exporter: new OTLPLogExporter({
               url: `${config.endpoint}/v1/logs`,
               headers: config.headers,
             }),
-          ),
+          }),
         );
       }
 
@@ -328,21 +330,23 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
         if (!deferredState.logProcessor.isConfigured()) {
           deferredState.logProcessor.configure(
             new BatchLogRecordProcessor({
-              export(logs: unknown, cb: (r: { code: number; error?: Error }) => void) {
-                const body = ProtobufLogsSerializer.serializeRequest(logs as never);
-                if (!body?.length) { cb({ code: ExportResultCode.SUCCESS }); return; }
-                grpcSend(getSession, LOG_PATH, body)
-                  .then(() => {
-                    logsExportLogger.onSuccess();
-                    cb({ code: ExportResultCode.SUCCESS });
-                  })
-                  .catch(err => {
-                    logsExportLogger.onFailure(err);
-                    cb({ code: ExportResultCode.FAILED, error: err });
-                  });
-              },
-              shutdown() { return Promise.resolve(); },
-            } as never),
+              exporter: {
+                export(logs: unknown, cb: (r: { code: number; error?: Error }) => void) {
+                  const body = ProtobufLogsSerializer.serializeRequest(logs as never);
+                  if (!body?.length) { cb({ code: ExportResultCode.SUCCESS }); return; }
+                  grpcSend(getSession, LOG_PATH, body)
+                    .then(() => {
+                      logsExportLogger.onSuccess();
+                      cb({ code: ExportResultCode.SUCCESS });
+                    })
+                    .catch(err => {
+                      logsExportLogger.onFailure(err);
+                      cb({ code: ExportResultCode.FAILED, error: err });
+                    });
+                },
+                shutdown() { return Promise.resolve(); },
+              } as never,
+            }),
           );
         }
 
@@ -378,9 +382,9 @@ export async function attachExporterToSdk(config: AttachExporterConfig): Promise
 
         if (!deferredState.logProcessor.isConfigured()) {
           deferredState.logProcessor.configure(
-            new BatchLogRecordProcessor(
-              new OTLPLogExporter({ url: grpcHost, credentials: channelCredentials }),
-            ),
+            new BatchLogRecordProcessor({
+              exporter: new OTLPLogExporter({ url: grpcHost, credentials: channelCredentials }),
+            }),
           );
         }
       }
